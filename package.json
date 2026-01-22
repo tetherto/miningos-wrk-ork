@@ -1,0 +1,43 @@
+{
+  "name": "miningos-wrk-ork",
+  "version": "0.0.1",
+  "description": "MiningOS Ork Worker",
+  "keywords": [
+    "tether"
+  ],
+  "author": "Tether",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tetherto/miningos-wrk-ork.git"
+  },
+  "engine": {
+    "node": ">=20.0"
+  },
+  "scripts": {
+    "lint": "standard",
+    "lint:fix": "standard --fix",
+    "test": "npm run lint && npm run test:unit && npm run test:integration",
+    "test:unit": "NODE_ENV=test brittle tests/unit/*.js",
+    "test:integration": "NODE_ENV=test brittle ./tests/integration/aggr.proc.ork.wrk.test.js",
+    "test:coverage": "brittle --coverage tests/**/*.js"
+  },
+  "dependencies": {
+    "@bitfinex/lib-js-util-base": "git+https://github.com/bitfinexcom/lib-js-util-base.git",
+    "@bitfinex/lib-js-util-task-queue": "git+https://github.com/bitfinexcom/lib-js-util-task-queue.git",
+    "async": "3.2.6",
+    "bfx-facs-interval": "git+https://github.com/bitfinexcom/bfx-facs-interval.git",
+    "bfx-facs-lru": "git+https://github.com/bitfinexcom/bfx-facs-lru.git",
+    "bfx-facs-scheduler": "git+https://github.com/bitfinexcom/bfx-facs-scheduler.git",
+    "date-fns": "3.6.0",
+    "debug": "4.4.1",
+    "mingo": "6.4.6",
+    "miningos-lib-stats": "git+https://github.com/tetherto/miningos-lib-stats.git",
+    "svc-facs-action-approver": "git+https://github.com/tetherto/svc-facs-action-approver.git",
+    "tether-wrk-base": "git+https://github.com/tetherto/tether-wrk-base.git"
+  },
+  "devDependencies": {
+    "brittle": "3.18.0",
+    "standard": "17.1.0"
+  }
+}

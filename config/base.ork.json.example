@@ -1,0 +1,6 @@
+{
+    "actionIntvlMs": 5000,
+    "callTargetsLimit": 500,
+    "automationIntvlMs": 60000,
+    "automationTypes": []
+}

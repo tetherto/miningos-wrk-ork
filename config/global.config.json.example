@@ -1,0 +1,24 @@
+{
+  "aggrTailLogTimezones": [
+    {
+      "code": "UTC",
+      "offset": 0
+    }
+  ],
+  "nominalSiteHashrate_MHS": 709032000000,
+  "nominalSiteMinerCapacity": 4232,
+  "nominalSiteWeightedAvgEfficiency": 28.36,
+  "nominalAvailablePowerMWh": 22.5,
+  "siteEnergyDataThresholdMWh": 0.05,
+  "consumptionLevels": {
+    "low": 50000,
+    "medium": 22450000,
+    "high": 22470000,
+    "critical": 22490000
+  },
+  "transformerThresholds": {
+    "medium": 1300000,
+    "high": 1400000
+  },
+  "isAutoSleepAllowed": false
+}
