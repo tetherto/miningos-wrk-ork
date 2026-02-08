@@ -59,6 +59,17 @@
 
 ## Architecture
 
+### Policy and Incentive Models (Conceptual)
+
+MiningOS deliberately separates operational policy, execution modules, and economic incentives.
+This separation allows operators to reason about why certain configurations or behaviours are desirable before deciding how to implement them or whether to attach economic incentives.
+
+At the policy level, MiningOS can be used to evaluate external models that define preferred behaviours, risk constraints, or security assumptions, without enforcing any specific outcome. Policies remain declarative and transparent, while execution stays explicit and operator-controlled.
+
+This approach makes it possible to experiment with external subsidy or security frameworks in a non-invasive way. For example, models such as $NAT may be treated as policy-level references that describe conditions under which certain configurations may be considered beneficial, without requiring direct integration into the core system.
+
+By keeping policy evaluation separate from execution and incentives, MiningOS preserves neutrality, reduces unintended coupling, and allows operators to adopt, modify, or ignore external models based on their own operational context.
+
 ### Class Hierarchy
 
 ```mermaid
