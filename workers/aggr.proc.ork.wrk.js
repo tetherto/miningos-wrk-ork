@@ -14,7 +14,8 @@ const {
   RPC_METHODS,
   COMMENT_ACTION,
   INVALID_ACTIONS_ERRORS,
-  DEFAULT_TIMEZONE
+  DEFAULT_TIMEZONE,
+  CONFIG_TYPES
 } = require('./lib/constants')
 const aggrCrossthg = require('./lib/aggr.crossthg')
 const { setTimeout: sleep } = require('timers/promises')
@@ -669,7 +670,7 @@ class WrkProcAggr extends TetherWrkBase {
   async pushAction (req) {
     const { query, action, params, voter, authPerms, batchActionUID, rackType = null } = req
 
-    const { targets, requiredPerms } = await this.actionCaller.getWriteCalls(query, action, params, authPerms)
+    const { targets, requiredPerms, approvalPerms } = await this.actionCaller.getWriteCalls(query, action, params, authPerms)
 
     let reqVotes = 1
     let callCount = 0
@@ -680,6 +681,8 @@ class WrkProcAggr extends TetherWrkBase {
       const entry = targets[rack]
       reqVotes = entry.reqVotes > reqVotes ? entry.reqVotes : reqVotes
       delete entry.reqVotes
+      // Clean up approvalPerms from targets (stored at payload level)
+      delete entry.approvalPerms
       callCount += entry.calls.length
 
       if (entry.error && INVALID_ACTIONS_ERRORS.some(err => entry.error.includes(err))) {
@@ -698,7 +701,7 @@ class WrkProcAggr extends TetherWrkBase {
 
     const data = await this.actionApprover_0.pushAction({
       action,
-      payload: [params, targets, requiredPerms],
+      payload: [params, targets, requiredPerms, approvalPerms],
       voter,
       reqVotesPos: reqVotes,
       // All the actions would denied by single negative vote.
@@ -783,8 +786,9 @@ class WrkProcAggr extends TetherWrkBase {
   async getAction (req) {
     const { id, type } = req
     const { data } = await this.actionApprover_0.getAction(type, id)
-    // split targets, call params and required perms
+    // split targets, call params, required perms and approval perms
     data.requiredPerms = data.payload[2]
+    data.approvalPerms = data.payload[3] || data.payload[2]
     data.targets = data.payload[1]
     data.params = data.payload[0]
     delete data.payload
@@ -804,8 +808,9 @@ class WrkProcAggr extends TetherWrkBase {
         const entry = queryRes[i]
         if (entry.status === 'fulfilled') {
           const action = entry.value.data
-          // split targets, call params and required perms
+          // split targets, call params, required perms and approval perms
           action.requiredPerms = action.payload[2]
+          action.approvalPerms = action.payload[3] || action.payload[2]
           action.targets = action.payload[1]
           action.params = action.payload[0]
           delete action.payload
@@ -827,8 +832,10 @@ class WrkProcAggr extends TetherWrkBase {
   async voteAction (req) {
     const { id, voter, approve, authPerms } = req
     const { data } = await this.actionApprover_0.getAction('voting', id)
-    const requiredPerms = data.payload[2]
-    if (!requiredPerms.every(p => authPerms.includes(p))) {
+    // Use approvalPerms (payload[3]) if present, fallback to requiredPerms (payload[2])
+    // approvalPerms controls who can vote/approve, requiredPerms controls who can submit
+    const approvalPerms = data.payload[3] || data.payload[2]
+    if (!approvalPerms.every(p => authPerms.includes(p))) {
       throw new Error('ERR_ACTION_DENIED')
     }
 
@@ -861,8 +868,9 @@ class WrkProcAggr extends TetherWrkBase {
   async _getActionsFromQueryStream (queryStream) {
     const res = []
     for await (const entry of queryStream) {
-      // split targets, call params and required perms
+      // split targets, call params, required perms and approval perms
       entry.requiredPerms = entry.payload[2]
+      entry.approvalPerms = entry.payload[3] || entry.payload[2]
       entry.targets = entry.payload[1]
       entry.params = entry.payload[0]
       delete entry.payload
@@ -1194,6 +1202,196 @@ class WrkProcAggr extends TetherWrkBase {
     return null
   }
 
+  // ============ Generic Config CRUD Methods ============
+
+  _generateConfigId () {
+    return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`
+  }
+
+  _validateConfigType (type) {
+    const validTypes = Object.values(CONFIG_TYPES)
+    if (!type || !validTypes.includes(type)) {
+      throw new Error('ERR_CONFIG_TYPE_INVALID')
+    }
+  }
+
+  _getConfigDbKey (type, id) {
+    return `${type}:${id}`
+  }
+
+  _validatePoolConfigData (data) {
+    if (!data.poolConfigName || typeof data.poolConfigName !== 'string') {
+      throw new Error('ERR_POOL_CONFIG_NAME_INVALID')
+    }
+    if (data.description !== undefined && typeof data.description !== 'string') {
+      throw new Error('ERR_DESCRIPTION_INVALID')
+    }
+    if (!Array.isArray(data.poolUrls) || data.poolUrls.length === 0) {
+      throw new Error('ERR_POOL_URLS_INVALID')
+    }
+    for (const poolUrl of data.poolUrls) {
+      if (!poolUrl.url || typeof poolUrl.url !== 'string') {
+        throw new Error('ERR_POOL_URL_INVALID')
+      }
+      if (!poolUrl.workerName || typeof poolUrl.workerName !== 'string') {
+        throw new Error('ERR_WORKER_NAME_INVALID')
+      }
+      if (!poolUrl.workerPassword || typeof poolUrl.workerPassword !== 'string') {
+        throw new Error('ERR_WORKER_PASSWORD_INVALID')
+      }
+      if (!poolUrl.pool || typeof poolUrl.pool !== 'string') {
+        throw new Error('ERR_POOL_INVALID')
+      }
+    }
+  }
+
+  _validateConfigData (type, data) {
+    switch (type) {
+      case CONFIG_TYPES.POOL:
+        this._validatePoolConfigData(data)
+        break
+      default:
+        throw new Error('ERR_CONFIG_TYPE_INVALID')
+    }
+  }
+
+  async registerConfig (req) {
+    const { type, data } = req
+
+    this._validateConfigType(type)
+
+    if (!data) {
+      throw new Error('ERR_CONFIG_DATA_MISSING')
+    }
+
+    this._validateConfigData(type, data)
+
+    const now = Date.now()
+    const id = this._generateConfigId()
+    const config = {
+      id,
+      type,
+      ...data,
+      status: 'approved',
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    const dbKey = this._getConfigDbKey(type, id)
+    await this.configsDb.put(dbKey, Buffer.from(JSON.stringify(config)))
+
+    return config
+  }
+
+  async updateConfig (req) {
+    const { type, id, data } = req
+
+    this._validateConfigType(type)
+
+    if (!id) {
+      throw new Error('ERR_CONFIG_ID_MISSING')
+    }
+
+    const dbKey = this._getConfigDbKey(type, id)
+    const existingData = await this.configsDb.get(dbKey)
+    if (!existingData) {
+      throw new Error('ERR_CONFIG_NOT_FOUND')
+    }
+
+    const existingConfig = JSON.parse(existingData.value.toString())
+
+    // Merge new data into existing config
+    const updatedConfig = { ...existingConfig }
+
+    if (type === CONFIG_TYPES.POOL) {
+      if (data.poolConfigName !== undefined) {
+        if (typeof data.poolConfigName !== 'string' || !data.poolConfigName) {
+          throw new Error('ERR_POOL_CONFIG_NAME_INVALID')
+        }
+        updatedConfig.poolConfigName = data.poolConfigName
+      }
+      if (data.description !== undefined) {
+        if (typeof data.description !== 'string') {
+          throw new Error('ERR_DESCRIPTION_INVALID')
+        }
+        updatedConfig.description = data.description
+      }
+      if (data.poolUrls !== undefined) {
+        if (!Array.isArray(data.poolUrls) || data.poolUrls.length === 0) {
+          throw new Error('ERR_POOL_URLS_INVALID')
+        }
+        for (const poolUrl of data.poolUrls) {
+          if (!poolUrl.url || typeof poolUrl.url !== 'string') {
+            throw new Error('ERR_POOL_URL_INVALID')
+          }
+          if (!poolUrl.workerName || typeof poolUrl.workerName !== 'string') {
+            throw new Error('ERR_WORKER_NAME_INVALID')
+          }
+          if (!poolUrl.workerPassword || typeof poolUrl.workerPassword !== 'string') {
+            throw new Error('ERR_WORKER_PASSWORD_INVALID')
+          }
+          if (!poolUrl.pool || typeof poolUrl.pool !== 'string') {
+            throw new Error('ERR_POOL_INVALID')
+          }
+        }
+        updatedConfig.poolUrls = data.poolUrls
+      }
+    }
+
+    if (data.status !== undefined) {
+      if (!['pending', 'approved', 'rejected'].includes(data.status)) {
+        throw new Error('ERR_STATUS_INVALID')
+      }
+      updatedConfig.status = data.status
+    }
+
+    updatedConfig.updatedAt = Date.now()
+
+    await this.configsDb.put(dbKey, Buffer.from(JSON.stringify(updatedConfig)))
+
+    return updatedConfig
+  }
+
+  async getConfigs (req) {
+    const { type, query = {}, fields = {} } = req || {}
+
+    this._validateConfigType(type)
+
+    const prefix = `${type}:`
+    const stream = this.configsDb.createReadStream({
+      gte: prefix,
+      lt: `${type};` // Character after ':'
+    })
+
+    const configs = []
+    for await (const entry of stream) {
+      const config = JSON.parse(entry.value.toString())
+      configs.push(config)
+    }
+
+    return this._filterData(configs, { query, fields })
+  }
+
+  async deleteConfig (req) {
+    const { type, id } = req
+
+    this._validateConfigType(type)
+
+    if (!id) {
+      throw new Error('ERR_CONFIG_ID_MISSING')
+    }
+
+    const dbKey = this._getConfigDbKey(type, id)
+    const existingData = await this.configsDb.get(dbKey)
+    if (!existingData) {
+      throw new Error('ERR_CONFIG_NOT_FOUND')
+    }
+
+    await this.configsDb.del(dbKey)
+
+    return 1
+  }
+
   _start (cb) {
     async.series([
       next => { super._start(next) },
@@ -1219,7 +1417,15 @@ class WrkProcAggr extends TetherWrkBase {
         )
         await this.tailLogAggrDb.ready()
 
-        const actionCaller = new ActionCaller(this.net_r0, this.racks, this.conf.ork.callTargetsLimit)
+        // store generic configs in db (pool configs, etc.)
+        this.configsDb = await this.store_s1.getBee(
+          { name: 'configs' },
+          { keyEncoding: 'utf-8' }
+        )
+        await this.configsDb.ready()
+
+        const orkActionsConfig = this.conf.ork.orkActions || {}
+        const actionCaller = new ActionCaller(this.net_r0, this.racks, this.conf.ork.callTargetsLimit, this, orkActionsConfig)
         const actionCallerProxy = new Proxy(actionCaller, {
           get: (target, property, receiver) => {
             // proxy action calls as methods don't exist
