@@ -98,6 +98,25 @@ const CONFIG_TYPES = {
   POOL: 'pool'
 }
 
+/**
+ * Default action config resolvers - maps actions to their config resolution rules
+ * The full config object is passed to the device worker which handles transformation
+ *
+ * Structure:
+ * {
+ *   [actionName]: {
+ *     configIdParam: string,  // Param field containing the config ID
+ *     configType: string      // Config type prefix in DB (e.g., 'pool' -> 'pool:configId')
+ *   }
+ * }
+ */
+const DEFAULT_ACTION_CONFIG_RESOLVERS = {
+  setupPools: {
+    configIdParam: 'poolConfigId',
+    configType: 'pool'
+  }
+}
+
 module.exports = {
   ACTION_TYPES,
   MS_24_HOURS,
@@ -108,5 +127,6 @@ module.exports = {
   RPC_METHODS,
   INVALID_ACTIONS_ERRORS,
   DEFAULT_TIMEZONE,
-  CONFIG_TYPES
+  CONFIG_TYPES,
+  DEFAULT_ACTION_CONFIG_RESOLVERS
 }

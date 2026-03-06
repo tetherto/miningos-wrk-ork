@@ -15,8 +15,18 @@ class ActionCaller {
    * @param {number} callTargetsLimit
    * @param {Object} orkInstance - Reference to the ORK worker instance for ORK-level actions
    * @param {Object} orkActionsConfig - Configuration for ORK-level actions (whitelist, reqVotes, etc.)
+   * @param {Hyperbee} configsDb - Database for storing configs (pool configs, etc.)
+   * @param {Object} actionConfigResolvers - Configuration for resolving action params from configs
+   * @example actionConfigResolvers format:
+   * {
+   *   setupPools: {
+   *     configIdParam: 'poolConfigId',  // Param field containing config ID
+   *     configType: 'pool'              // Config type prefix in DB (e.g., 'pool:id')
+   *   }
+   * }
+   * The full config object is passed to the action. The device worker handles the transformation.
    */
-  constructor (net, racks, callTargetsLimit = 50, orkInstance = null, orkActionsConfig = {}) {
+  constructor (net, racks, callTargetsLimit = 50, orkInstance = null, orkActionsConfig = {}, configsDb = null, actionConfigResolvers = {}) {
     if (!(net instanceof NetFacility)) {
       throw new Error('ERR_NET_INVALID_INSTANCE')
     }
@@ -29,6 +39,8 @@ class ActionCaller {
     this._racks = racks
     this._orkInstance = orkInstance
     this._orkActionsConfig = orkActionsConfig
+    this._configsDb = configsDb
+    this._actionConfigResolvers = actionConfigResolvers
     this.rackActions = new Set([ACTION_TYPES.REGISTER_THING, ACTION_TYPES.UPDATE_THING, ACTION_TYPES.FORGET_THINGS, ACTION_TYPES.RACK_REBOOT])
     this.orkActions = new Set([ACTION_TYPES.REGISTER_CONFIG, ACTION_TYPES.UPDATE_CONFIG, ACTION_TYPES.DELETE_CONFIG])
     this._callTargetsLimit = callTargetsLimit
@@ -76,6 +88,42 @@ class ActionCaller {
   }
 
   /**
+   * Resolves action params from a stored config based on actionConfigResolvers configuration
+   * Fetches the full config and passes it to the action. The device worker handles transformation.
+   * @param {string} action - The action name
+   * @param {Object} params - The action params (first element of params array)
+   * @returns {Promise<Array|null>} - Config data as params array or null if no resolution needed
+   */
+  async _resolveActionConfig (action, params) {
+    const resolver = this._actionConfigResolvers[action]
+    if (!resolver) {
+      return null
+    }
+
+    const { configIdParam, configType } = resolver
+
+    const configId = params?.[configIdParam]
+    if (!configId) {
+      return null
+    }
+
+    if (!this._configsDb) {
+      throw new Error('ERR_CONFIGS_DB_NOT_AVAILABLE')
+    }
+
+    const dbKey = `${configType}:${configId}`
+    const configData = await this._configsDb.get(dbKey)
+
+    if (!configData) {
+      throw new Error('ERR_CONFIG_NOT_FOUND')
+    }
+
+    const config = JSON.parse(configData.value.toString())
+
+    return [{ config }]
+  }
+
+  /**
    * @param {string} rack
    * @param {string} id
    * @param {string} method
@@ -113,10 +161,16 @@ class ActionCaller {
       )
     }
 
+    let resolvedParams = params
+    const resolved = await this._resolveActionConfig(method, params[0])
+    if (resolved) {
+      resolvedParams = resolved
+    }
+
     return this._net.jRequest(
       entry.info.rpcPublicKey,
       'queryThing',
-      { id, method, params }
+      { id, method, params: resolvedParams }
     )
   }
 

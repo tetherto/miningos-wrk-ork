@@ -15,7 +15,8 @@ const {
   COMMENT_ACTION,
   INVALID_ACTIONS_ERRORS,
   DEFAULT_TIMEZONE,
-  CONFIG_TYPES
+  CONFIG_TYPES,
+  DEFAULT_ACTION_CONFIG_RESOLVERS
 } = require('./lib/constants')
 const aggrCrossthg = require('./lib/aggr.crossthg')
 const { setTimeout: sleep } = require('timers/promises')
@@ -1274,7 +1275,7 @@ class WrkProcAggr extends TetherWrkBase {
       ...data,
       status: 'approved',
       createdAt: now,
-      updatedAt: now,
+      updatedAt: now
     }
 
     const dbKey = this._getConfigDbKey(type, id)
@@ -1425,7 +1426,12 @@ class WrkProcAggr extends TetherWrkBase {
         await this.configsDb.ready()
 
         const orkActionsConfig = this.conf.ork.orkActions || {}
-        const actionCaller = new ActionCaller(this.net_r0, this.racks, this.conf.ork.callTargetsLimit, this, orkActionsConfig)
+        // Merge default action config resolvers with any custom ones from config
+        const actionConfigResolvers = {
+          ...DEFAULT_ACTION_CONFIG_RESOLVERS,
+          ...(this.conf.ork.actionConfigResolvers || {})
+        }
+        const actionCaller = new ActionCaller(this.net_r0, this.racks, this.conf.ork.callTargetsLimit, this, orkActionsConfig, this.configsDb, actionConfigResolvers)
         const actionCallerProxy = new Proxy(actionCaller, {
           get: (target, property, receiver) => {
             // proxy action calls as methods don't exist

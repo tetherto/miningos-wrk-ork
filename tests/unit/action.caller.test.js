@@ -6,11 +6,11 @@ const { ACTION_TYPES } = require('../../workers/lib/constants')
 
 // Mock NetFacility - we'll bypass instanceof checks in tests
 class MockNetFacility {
-  constructor () {
+  constructor() {
     this.jRequestCalls = []
   }
 
-  async jRequest (publicKey, method, params, opts) {
+  async jRequest(publicKey, method, params, opts) {
     this.jRequestCalls.push({ publicKey, method, params, opts })
     return { calls: [], reqVotes: 1 }
   }
@@ -18,18 +18,18 @@ class MockNetFacility {
 
 // Mock Hyperbee - we'll bypass instanceof checks in tests
 class MockHyperbee {
-  constructor (data = {}) {
+  constructor(data = {}) {
     this.data = data
   }
 
-  async get (key) {
+  async get(key) {
     if (this.data[key]) {
       return { value: Buffer.from(JSON.stringify(this.data[key])) }
     }
     return null
   }
 
-  createReadStream () {
+  createReadStream() {
     const entries = Object.entries(this.data).map(([key, value]) => ({
       key,
       value: Buffer.from(JSON.stringify(value))
@@ -39,11 +39,16 @@ class MockHyperbee {
 }
 
 // Helper to create ActionCaller bypassing instanceof checks
-function createActionCaller (net, racks, callTargetsLimit) {
+function createActionCaller(net, racks, callTargetsLimit, orkInstance, orkActionsConfig, configsDb, actionConfigResolvers) {
   const caller = Object.create(ActionCaller.prototype)
   caller._net = net
   caller._racks = racks
+  caller._orkInstance = orkInstance || null
+  caller._orkActionsConfig = orkActionsConfig || {}
+  caller._configsDb = configsDb || null
+  caller._actionConfigResolvers = actionConfigResolvers || {}
   caller.rackActions = new Set([ACTION_TYPES.REGISTER_THING, ACTION_TYPES.UPDATE_THING, ACTION_TYPES.FORGET_THINGS, ACTION_TYPES.RACK_REBOOT])
+  caller.orkActions = new Set([ACTION_TYPES.REGISTER_CONFIG, ACTION_TYPES.UPDATE_CONFIG, ACTION_TYPES.DELETE_CONFIG])
   caller._callTargetsLimit = callTargetsLimit || 50
   return caller
 }
@@ -295,5 +300,311 @@ test('ActionCaller callTargets', async (t) => {
     await caller.callTargets('action', ['param1'], {})
 
     t.is(net.jRequestCalls.length, 0, 'should make no calls')
+  })
+})
+
+// Default action config resolvers for testing
+// Config is passed as-is to the device worker which handles transformation
+const testActionConfigResolvers = {
+  setupPools: {
+    configIdParam: 'poolConfigId',
+    configType: 'pool'
+  }
+}
+
+test('ActionCaller _resolveActionConfig', async (t) => {
+  t.test('should return null if no resolver configured for action', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee()
+    const configsDb = new MockHyperbee({})
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, {})
+
+    const result = await caller._resolveActionConfig('unknownAction', { someParam: 'value' })
+
+    t.is(result, null, 'should return null for unconfigured action')
+  })
+
+  t.test('should return null if configIdParam not in params', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee()
+    const configsDb = new MockHyperbee({})
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+
+    const result = await caller._resolveActionConfig('setupPools', { otherParam: 'value' })
+
+    t.is(result, null, 'should return null when config ID param is missing')
+  })
+
+  t.test('should throw error if configsDb is not available', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee()
+    const caller = createActionCaller(net, racks, 50, null, {}, null, testActionConfigResolvers)
+
+    try {
+      await caller._resolveActionConfig('setupPools', { poolConfigId: 'config-123' })
+      t.fail('should throw error')
+    } catch (err) {
+      t.is(err.message, 'ERR_CONFIGS_DB_NOT_AVAILABLE', 'should throw correct error')
+    }
+  })
+
+  t.test('should throw error if config not found', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee()
+    const configsDb = new MockHyperbee({})
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+
+    try {
+      await caller._resolveActionConfig('setupPools', { poolConfigId: 'non-existent-config' })
+      t.fail('should throw error')
+    } catch (err) {
+      t.is(err.message, 'ERR_CONFIG_NOT_FOUND', 'should throw correct error')
+    }
+  })
+
+  t.test('should throw error if config status is not approved', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee()
+    const configsDb = new MockHyperbee({
+      'pool:config-123': {
+        id: 'config-123',
+        poolConfigName: 'Test Pool',
+        status: 'pending',
+        poolUrls: [
+          { url: 'stratum://pool1.example.com:3333', workerName: 'worker1', workerPassword: 'pass1', pool: 'pool1' }
+        ]
+      }
+    })
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+
+    try {
+      await caller._resolveActionConfig('setupPools', { poolConfigId: 'config-123' })
+      t.fail('should throw error')
+    } catch (err) {
+      t.is(err.message, 'ERR_CONFIG_NOT_APPROVED', 'should throw correct error')
+    }
+  })
+
+  t.test('should return full config object for device worker to transform', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee()
+    const configsDb = new MockHyperbee({
+      'pool:config-123': {
+        id: 'config-123',
+        poolConfigName: 'Test Pool',
+        status: 'approved',
+        poolUrls: [
+          { url: 'stratum://pool1.example.com:3333', workerName: 'worker1', workerPassword: 'pass1', pool: 'pool1' },
+          { url: 'stratum://pool2.example.com:3333', workerName: 'worker2', workerPassword: 'pass2', pool: 'pool2' }
+        ]
+      }
+    })
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+
+    const result = await caller._resolveActionConfig('setupPools', { poolConfigId: 'config-123' })
+
+    t.ok(Array.isArray(result), 'should return an array')
+    t.is(result.length, 1, 'should have 1 element')
+    t.ok(result[0].config, 'first element should have config object')
+    t.is(result[0].config.id, 'config-123', 'should have correct config id')
+    t.is(result[0].config.poolConfigName, 'Test Pool', 'should have config name')
+    t.is(result[0].config.poolUrls.length, 2, 'should have poolUrls array')
+    t.is(result[0].config.poolUrls[0].url, 'stratum://pool1.example.com:3333', 'should have original url')
+    t.is(result[0].config.poolUrls[0].workerName, 'worker1', 'should have original workerName (not transformed)')
+  })
+
+  t.test('should work with custom action config resolvers', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee()
+    const configsDb = new MockHyperbee({
+      'firmware:fw-456': {
+        id: 'fw-456',
+        firmwareName: 'Test Firmware',
+        status: 'approved',
+        files: [
+          { filename: 'firmware.bin', checksum: 'abc123', size: 1024 },
+          { filename: 'config.txt', checksum: 'def456', size: 512 }
+        ]
+      }
+    })
+
+    // Custom resolver for a hypothetical updateFirmware action
+    const customResolvers = {
+      updateFirmware: {
+        configIdParam: 'firmwareConfigId',
+        configType: 'firmware'
+      }
+    }
+
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, customResolvers)
+
+    const result = await caller._resolveActionConfig('updateFirmware', { firmwareConfigId: 'fw-456' })
+
+    t.ok(Array.isArray(result), 'should return an array')
+    t.ok(result[0].config, 'should have config object')
+    t.is(result[0].config.id, 'fw-456', 'should have correct config id')
+    t.is(result[0].config.firmwareName, 'Test Firmware', 'should have firmware name')
+    t.is(result[0].config.files.length, 2, 'should have files array')
+  })
+})
+
+test('ActionCaller _callThing with config resolution', async (t) => {
+  t.test('should resolve config and pass full config object to target', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee({
+      'miner-rack1': {
+        id: 'miner-rack1',
+        info: { rpcPublicKey: 'rpc-key-123' }
+      }
+    })
+    const configsDb = new MockHyperbee({
+      'pool:pool-config-456': {
+        id: 'pool-config-456',
+        poolConfigName: 'Mining Pool Config',
+        status: 'approved',
+        poolUrls: [
+          { url: 'stratum://f2pool.com:3333', workerName: 'account.worker', workerPassword: 'x', pool: 'f2pool' },
+          { url: 'stratum://antpool.com:3333', workerName: 'account2.worker', workerPassword: 'y', pool: 'antpool' }
+        ]
+      }
+    })
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+
+    await caller._callThing('miner-rack1', 'miner-uuid-1', ACTION_TYPES.SETUP_POOLS, [{ poolConfigId: 'pool-config-456' }])
+
+    t.is(net.jRequestCalls.length, 1, 'should make 1 call')
+    t.is(net.jRequestCalls[0].method, 'queryThing', 'should use queryThing method')
+    t.is(net.jRequestCalls[0].params.id, 'miner-uuid-1', 'should pass correct miner id')
+    t.is(net.jRequestCalls[0].params.method, ACTION_TYPES.SETUP_POOLS, 'should pass setupPools method')
+
+    const resolvedParams = net.jRequestCalls[0].params.params
+    t.ok(Array.isArray(resolvedParams), 'params should be an array')
+    t.is(resolvedParams.length, 1, 'params should have 1 element')
+    t.ok(resolvedParams[0].config, 'first param should have config object')
+    t.is(resolvedParams[0].config.id, 'pool-config-456', 'should have config id')
+    t.is(resolvedParams[0].config.poolConfigName, 'Mining Pool Config', 'should have config name')
+    t.is(resolvedParams[0].config.poolUrls.length, 2, 'should have 2 pools in config')
+    t.is(resolvedParams[0].config.poolUrls[0].url, 'stratum://f2pool.com:3333', 'should have original pool url')
+    t.is(resolvedParams[0].config.poolUrls[0].workerName, 'account.worker', 'should have original workerName (device worker transforms)')
+  })
+
+  t.test('should pass params directly if no configIdParam in params', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee({
+      'miner-rack1': {
+        id: 'miner-rack1',
+        info: { rpcPublicKey: 'rpc-key-123' }
+      }
+    })
+    const configsDb = new MockHyperbee({})
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+
+    const directPools = [
+      { url: 'stratum://direct.pool.com:3333', worker_name: 'direct_worker', worker_password: 'abc' }
+    ]
+
+    await caller._callThing('miner-rack1', 'miner-uuid-1', ACTION_TYPES.SETUP_POOLS, [directPools])
+
+    t.is(net.jRequestCalls.length, 1, 'should make 1 call')
+    const resolvedParams = net.jRequestCalls[0].params.params
+    t.is(resolvedParams[0], directPools, 'should pass pools directly without transformation')
+  })
+
+  t.test('should handle actions without resolver normally', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee({
+      'miner-rack1': {
+        id: 'miner-rack1',
+        info: { rpcPublicKey: 'rpc-key-123' }
+      }
+    })
+    const configsDb = new MockHyperbee({})
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+
+    await caller._callThing('miner-rack1', 'miner-uuid-1', ACTION_TYPES.REBOOT, ['normal', 'params'])
+
+    t.is(net.jRequestCalls.length, 1, 'should make 1 call')
+    t.is(net.jRequestCalls[0].params.method, ACTION_TYPES.REBOOT, 'should pass reboot method')
+    const resolvedParams = net.jRequestCalls[0].params.params
+    t.alike(resolvedParams, ['normal', 'params'], 'should pass params unchanged')
+  })
+
+  t.test('should throw error if config not found', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee({
+      'miner-rack1': {
+        id: 'miner-rack1',
+        info: { rpcPublicKey: 'rpc-key-123' }
+      }
+    })
+    const configsDb = new MockHyperbee({})
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+
+    try {
+      await caller._callThing('miner-rack1', 'miner-uuid-1', ACTION_TYPES.SETUP_POOLS, [{ poolConfigId: 'non-existent' }])
+      t.fail('should throw error')
+    } catch (err) {
+      t.is(err.message, 'ERR_CONFIG_NOT_FOUND', 'should throw correct error')
+    }
+  })
+
+  t.test('should handle action with empty params object', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee({
+      'miner-rack1': {
+        id: 'miner-rack1',
+        info: { rpcPublicKey: 'rpc-key-123' }
+      }
+    })
+    const configsDb = new MockHyperbee({})
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+
+    // Empty params object - no poolConfigId
+    await caller._callThing('miner-rack1', 'miner-uuid-1', ACTION_TYPES.SETUP_POOLS, [{}])
+
+    t.is(net.jRequestCalls.length, 1, 'should make 1 call')
+    const resolvedParams = net.jRequestCalls[0].params.params
+    t.alike(resolvedParams, [{}], 'should pass empty object as-is')
+  })
+
+  t.test('should work with custom resolvers for different actions', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee({
+      'container-rack1': {
+        id: 'container-rack1',
+        info: { rpcPublicKey: 'rpc-key-789' }
+      }
+    })
+    const configsDb = new MockHyperbee({
+      'temperature:temp-config-1': {
+        id: 'temp-config-1',
+        name: 'Summer Settings',
+        status: 'approved',
+        settings: [
+          { zone: 'inlet', targetTemp: 25, maxTemp: 30 },
+          { zone: 'outlet', targetTemp: 35, maxTemp: 45 }
+        ]
+      }
+    })
+
+    const customResolvers = {
+      setTemperatureSettings: {
+        configIdParam: 'tempConfigId',
+        configType: 'temperature'
+      }
+    }
+
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, customResolvers)
+
+    await caller._callThing('container-rack1', 'container-uuid-1', 'setTemperatureSettings', [{ tempConfigId: 'temp-config-1' }])
+
+    t.is(net.jRequestCalls.length, 1, 'should make 1 call')
+    const resolvedParams = net.jRequestCalls[0].params.params
+    t.ok(resolvedParams[0].config, 'should have config object')
+    t.is(resolvedParams[0].config.id, 'temp-config-1', 'should have config id')
+    t.is(resolvedParams[0].config.name, 'Summer Settings', 'should have config name')
+    t.is(resolvedParams[0].config.settings.length, 2, 'should have 2 temperature settings')
+    t.is(resolvedParams[0].config.settings[0].zone, 'inlet', 'should have original zone (device worker transforms)')
+    t.is(resolvedParams[0].config.settings[0].targetTemp, 25, 'should have original targetTemp')
   })
 })
