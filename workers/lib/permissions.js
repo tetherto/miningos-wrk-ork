@@ -1,3 +1,5 @@
+'use strict'
+
 const { PERMISSION_LEVELS } = require('./constants')
 
 const hasPermission = (permissions, requestedPerm) => {
