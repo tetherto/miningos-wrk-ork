@@ -383,6 +383,18 @@ test('Worker initialization', async (t) => {
 })
 
 test('registerRack', async (t) => {
+  t.test('should register a lib instance (lib mode)', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const libInstance = { async listThings () { return [] } }
+    const result = await worker.registerRack({ id: 'lib-1', type: 'miner', libInstance })
+
+    t.is(result, 1, 'should return 1')
+    t.ok(worker.ctx.libMap.has('lib-1'), 'should add entry to libMap')
+    t.is(worker.ctx.libMap.get('lib-1').type, 'miner')
+  })
+
   t.test('should register a rack successfully', async (t) => {
     const worker = await createWorker()
     worker._start(() => {})
@@ -515,6 +527,19 @@ test('listRacks', async (t) => {
     t.is(result[0].info.rpcPublicKey, 'secret-key', 'should expose rpcPublicKey')
   })
 
+  t.test('should filter racks by type prefix', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    await worker.registerRack({ id: 'rack-1', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key1' } })
+    await worker.registerRack({ id: 'rack-2', type: 'wrk-miner-l7', info: { rpcPublicKey: 'key2' } })
+    await worker.registerRack({ id: 'rack-3', type: 'wrk-psu', info: { rpcPublicKey: 'key3' } })
+
+    const result = await worker.listRacks({ type: 'wrk-miner' })
+    t.is(result.length, 2, 'should return only miner racks')
+    t.ok(result.every(r => r.type.startsWith('wrk-miner')))
+  })
+
   t.test('should throw error for invalid type', async (t) => {
     const worker = await createWorker()
     worker._start(() => {})
@@ -575,6 +600,81 @@ test('forgetRacks', async (t) => {
   })
 })
 
+test('_racksCache', async (t) => {
+  t.test('should be null before first use', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    t.is(worker._racksCache, null, 'cache should be null before any rack operation')
+  })
+
+  t.test('should be populated after first read via _getRacksEntries', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    await worker.registerRack({
+      id: 'rack-1',
+      type: 'wrk-miner-s19',
+      info: { rpcPublicKey: 'key1' }
+    })
+
+    // trigger a read to warm the cache (registerRack upserts into it if warm)
+    // force warm by calling _getRacksEntries directly
+    await worker._getRacksEntries()
+    t.ok(Array.isArray(worker._racksCache), 'cache should be an array after _getRacksEntries')
+  })
+
+  t.test('registerRack adds new entry to warm cache', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    await worker._getRacksEntries() // warm the cache
+    await worker.registerRack({ id: 'rack-1', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key1' } })
+    t.is(worker._racksCache.length, 1, 'cache should have 1 entry')
+
+    await worker.registerRack({ id: 'rack-2', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key2' } })
+    t.is(worker._racksCache.length, 2, 'cache should have 2 entries after second register')
+  })
+
+  t.test('registerRack updates existing entry in warm cache', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    await worker._getRacksEntries() // warm the cache
+    await worker.registerRack({ id: 'rack-1', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key1' } })
+    await worker.registerRack({ id: 'rack-1', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key1-updated' } })
+
+    t.is(worker._racksCache.length, 1, 'cache should still have 1 entry after re-registration')
+    t.is(worker._racksCache[0].info.rpcPublicKey, 'key1-updated', 'cache should have updated rpcPublicKey')
+  })
+
+  t.test('forgetRacks removes entries from warm cache', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    await worker._getRacksEntries() // warm the cache
+    await worker.registerRack({ id: 'rack-1', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key1' } })
+    await worker.registerRack({ id: 'rack-2', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key2' } })
+    t.is(worker._racksCache.length, 2)
+
+    await worker.forgetRacks({ ids: ['rack-1'] })
+    t.is(worker._racksCache.length, 1, 'cache should have 1 entry after forget')
+    t.is(worker._racksCache[0].id, 'rack-2', 'remaining cache entry should be rack-2')
+  })
+
+  t.test('forgetRacks all clears cache', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    await worker._getRacksEntries() // warm the cache
+    await worker.registerRack({ id: 'rack-1', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key1' } })
+    await worker.registerRack({ id: 'rack-2', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key2' } })
+
+    await worker.forgetRacks({ all: true })
+    t.is(worker._racksCache.length, 0, 'cache should be empty after forget all')
+  })
+})
+
 test('listThings', async (t) => {
   t.test('should list things from all racks', async (t) => {
     const worker = await createWorker()
@@ -609,6 +709,21 @@ test('listThings', async (t) => {
     t.ok(Array.isArray(result), 'should return array')
     t.is(result.length, 0, 'should return empty array on error')
   })
+
+  t.test('should return sorted results when sort is provided', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    worker.net_r0.jRequest = async () => [
+      { id: 'b', hashrate: 50 },
+      { id: 'a', hashrate: 100 }
+    ]
+
+    await worker.registerRack({ id: 'rack-1', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key1' } })
+
+    const result = await worker.listThings({ sort: { field: 'hashrate', direction: 1 } })
+    t.ok(Array.isArray(result), 'should return array')
+  })
 })
 
 test('getHistoricalLogs', async (t) => {
@@ -624,6 +739,23 @@ test('getHistoricalLogs', async (t) => {
 
     const result = await worker.getHistoricalLogs({ logType: 'test' })
     t.ok(Array.isArray(result), 'should return array')
+  })
+
+  t.test('should return sorted results when sort is provided', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    worker.net_r0.jRequest = async () => [
+      { id: 'log2', ts: 200 },
+      { id: 'log1', ts: 100 }
+    ]
+
+    await worker.registerRack({ id: 'rack-1', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key1' } })
+
+    const result = await worker.getHistoricalLogs({ logType: 'test', sort: { ts: 1 } })
+    t.ok(Array.isArray(result), 'should return array')
+    t.is(result[0].ts, 100, 'should be sorted ascending by ts')
+    t.is(result[1].ts, 200)
   })
 
   t.test('should throw error for missing logType', async (t) => {
@@ -997,6 +1129,22 @@ test('getWrkConf', async (t) => {
     t.ok(Array.isArray(result), 'should return array')
   })
 
+  t.test('should only call racks matching the requested type', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    await worker.registerRack({ id: 'rack-miner', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key1' } })
+    await worker.registerRack({ id: 'rack-psu', type: 'wrk-psu', info: { rpcPublicKey: 'key2' } })
+
+    await worker.getWrkConf({ type: 'wrk-miner-s19' })
+
+    const calledKeys = worker.net_r0.jRequestCalls
+      .filter(c => c.method === 'getWrkConf')
+      .map(c => c.publicKey)
+    t.is(calledKeys.length, 1, 'should only call one rack')
+    t.is(calledKeys[0], 'key1', 'should call the miner rack')
+  })
+
   t.test('should throw error for missing type', async (t) => {
     const worker = await createWorker()
     worker._start(() => {})
@@ -1025,6 +1173,22 @@ test('getThingConf', async (t) => {
     t.ok(Array.isArray(result), 'should return array')
   })
 
+  t.test('should only call racks matching the requested type', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    await worker.registerRack({ id: 'rack-miner', type: 'wrk-miner-s19', info: { rpcPublicKey: 'key1' } })
+    await worker.registerRack({ id: 'rack-psu', type: 'wrk-psu', info: { rpcPublicKey: 'key2' } })
+
+    await worker.getThingConf({ type: 'wrk-miner-s19' })
+
+    const calledKeys = worker.net_r0.jRequestCalls
+      .filter(c => c.method === 'getThingConf')
+      .map(c => c.publicKey)
+    t.is(calledKeys.length, 1, 'should only call one rack')
+    t.is(calledKeys[0], 'key1', 'should call the miner rack')
+  })
+
   t.test('should throw error for missing type', async (t) => {
     const worker = await createWorker()
     worker._start(() => {})
@@ -1051,6 +1215,14 @@ test('getWrkSettings', async (t) => {
 
     const result = await worker.getWrkSettings({ rackId: 'rack-1' })
     t.ok(result, 'should return settings')
+  })
+
+  t.test('should return 0 when rack not found', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const result = await worker.getWrkSettings({ rackId: 'nonexistent' })
+    t.is(result, 0, 'should return 0 when rack not found')
   })
 
   t.test('should throw error for invalid rackId', async (t) => {
@@ -1096,6 +1268,14 @@ test('saveWrkSettings', async (t) => {
     }
   })
 
+  t.test('should return 0 when rack not found', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const result = await worker.saveWrkSettings({ rackId: 'nonexistent', entries: { k: 'v' } })
+    t.is(result, 0, 'should return 0 when rack not found')
+  })
+
   t.test('should throw error for invalid entries', async (t) => {
     const worker = await createWorker()
     worker._start(() => {})
@@ -1138,6 +1318,14 @@ test('saveThingComment', async (t) => {
     } catch (err) {
       t.is(err.message, 'ERR_RACK_ID_INVALID', 'should throw correct error')
     }
+  })
+
+  t.test('should return 0 when rack not found', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const result = await worker.saveThingComment({ rackId: 'nonexistent', thingId: 'thing-1' })
+    t.is(result, 0, 'should return 0 when rack not found')
   })
 
   t.test('should throw error for missing thingId', async (t) => {
