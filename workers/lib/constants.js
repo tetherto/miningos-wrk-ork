@@ -58,6 +58,7 @@ const RPC_METHODS = [
   { name: 'forgetRacks', op: 'w' },
   { name: 'listRacks', op: 'r' },
   { name: 'listThings', op: 'r' },
+  { name: 'getThingsCount', op: 'r' },
   { name: 'getHistoricalLogs', op: 'r' },
   { name: 'forgetThings', op: 'w' },
   { name: 'tailLog', op: 'r' },

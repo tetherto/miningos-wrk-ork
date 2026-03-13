@@ -115,6 +115,9 @@ class MockNet {
     if (method === 'forgetThings') {
       return 1
     }
+    if (method === 'getThingsCount') {
+      return 3
+    }
     if (method === 'tailLog') {
       return [{ ts: Date.now(), value: 100 }]
     }
@@ -784,6 +787,80 @@ test('forgetThings', async (t) => {
 
     const result = await worker.forgetThings({ query: { id: 'thing1' } })
     t.is(typeof result, 'number', 'should return number')
+  })
+})
+
+test('getThingsCount', async (t) => {
+  t.test('should sum counts from all racks', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    await worker.registerRack({
+      id: 'rack-1',
+      type: 'wrk-miner-s19',
+      info: { rpcPublicKey: 'key1' }
+    })
+
+    await worker.registerRack({
+      id: 'rack-2',
+      type: 'wrk-miner-s19',
+      info: { rpcPublicKey: 'key2' }
+    })
+
+    const result = await worker.getThingsCount({ query: { tags: { $in: ['t-miner'] } } })
+    t.is(typeof result, 'number', 'should return a number')
+    t.is(result, 6, 'should sum counts from both racks (3 + 3)')
+  })
+
+  t.test('should return 0 when no racks registered', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const result = await worker.getThingsCount({})
+    t.is(result, 0, 'should return 0 with no racks')
+  })
+
+  t.test('should handle errors from racks gracefully', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    worker.net_r0.jRequest = async () => {
+      throw new Error('Network error')
+    }
+
+    await worker.registerRack({
+      id: 'rack-1',
+      type: 'wrk-miner-s19',
+      info: { rpcPublicKey: 'key1' }
+    })
+
+    const result = await worker.getThingsCount({})
+    t.is(result, 0, 'should return 0 on error')
+  })
+
+  t.test('should pass query through to racks', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const capturedCalls = []
+    worker.net_r0.jRequest = async (publicKey, method, params, opts) => {
+      capturedCalls.push({ method, params })
+      return 5
+    }
+
+    await worker.registerRack({
+      id: 'rack-1',
+      type: 'wrk-miner-s19',
+      info: { rpcPublicKey: 'key1' }
+    })
+
+    const query = { tags: { $in: ['t-miner'] } }
+    await worker.getThingsCount({ query, status: 1 })
+
+    t.is(capturedCalls.length, 1, 'should make one RPC call')
+    t.is(capturedCalls[0].method, 'getThingsCount', 'should call getThingsCount')
+    t.alike(capturedCalls[0].params.query, query, 'should forward query')
+    t.is(capturedCalls[0].params.status, 1, 'should forward status')
   })
 })
 

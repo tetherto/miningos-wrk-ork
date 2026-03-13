@@ -188,6 +188,26 @@ class WrkProcAggr extends TetherWrkBase {
     return collection.sort((a, b) => sortThings(a, b, req.sort))
   }
 
+  async getThingsCount (req) {
+    const stream = this.racks.createReadStream()
+
+    const counts = await async.mapLimit(stream, 25, async data => {
+      const entry = JSON.parse(data.value.toString())
+      try {
+        return await this.net_r0.jRequest(
+          entry.info.rpcPublicKey,
+          'getThingsCount',
+          req, { timeout: 10000 }
+        )
+      } catch (e) {
+        this.debugError(`getThingsCount ${entry.id}`, e, true)
+        return 0
+      }
+    })
+
+    return counts.reduce((acc, c) => acc + (c || 0), 0)
+  }
+
   async getHistoricalLogs (req) {
     if (!req.logType) {
       throw new Error('ERR_LOG_TYPE_INVALID')
