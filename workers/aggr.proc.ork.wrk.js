@@ -170,8 +170,8 @@ class WrkProcAggr extends TetherWrkBase {
 
     if (!req.keys) {
       return res.map(entry => {
-        delete entry.info.rpcPublicKey
-        return entry
+        // remove rpc key from info
+        return { ...entry, info: {} }
       })
     }
 

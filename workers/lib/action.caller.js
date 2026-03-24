@@ -119,6 +119,9 @@ class ActionCaller {
     }
 
     const config = JSON.parse(configData.value.toString())
+    if (config?.status !== 'approved') {
+      throw new Error('ERR_CONFIG_NOT_APPROVED')
+    }
 
     return [{ config }]
   }

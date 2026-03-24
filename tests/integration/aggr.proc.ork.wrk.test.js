@@ -554,6 +554,25 @@ test('listRacks', async (t) => {
       t.is(err.message, 'ERR_TYPE_INVALID', 'should throw correct error')
     }
   })
+
+  t.test('should not mutate cached rack info when redacting keys', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    await worker.registerRack({
+      id: 'rack-1',
+      type: 'wrk-miner-s19',
+      info: { rpcPublicKey: 'secret-key' }
+    })
+
+    await worker._getRacksEntries()
+    const redacted = await worker.listRacks({})
+    t.absent(redacted[0].info.rpcPublicKey, 'redacted response should not expose rpcPublicKey')
+
+    // Ensure cache still has original rpcPublicKey
+    const withKeys = await worker.listRacks({ keys: true })
+    t.is(withKeys[0].info.rpcPublicKey, 'secret-key', 'cache should not be mutated by list redaction')
+  })
 })
 
 test('forgetRacks', async (t) => {

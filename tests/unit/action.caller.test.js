@@ -6,11 +6,11 @@ const { ACTION_TYPES } = require('../../workers/lib/constants')
 
 // Mock NetFacility - we'll bypass instanceof checks in tests
 class MockNetFacility {
-  constructor() {
+  constructor () {
     this.jRequestCalls = []
   }
 
-  async jRequest(publicKey, method, params, opts) {
+  async jRequest (publicKey, method, params, opts) {
     this.jRequestCalls.push({ publicKey, method, params, opts })
     return { calls: [], reqVotes: 1 }
   }
@@ -18,18 +18,18 @@ class MockNetFacility {
 
 // Mock Hyperbee - we'll bypass instanceof checks in tests
 class MockHyperbee {
-  constructor(data = {}) {
+  constructor (data = {}) {
     this.data = data
   }
 
-  async get(key) {
+  async get (key) {
     if (this.data[key]) {
       return { value: Buffer.from(JSON.stringify(this.data[key])) }
     }
     return null
   }
 
-  createReadStream() {
+  createReadStream () {
     const entries = Object.entries(this.data).map(([key, value]) => ({
       key,
       value: Buffer.from(JSON.stringify(value))
@@ -39,7 +39,7 @@ class MockHyperbee {
 }
 
 // Helper to create ActionCaller bypassing instanceof checks
-function createActionCaller(net, racks, callTargetsLimit, orkInstance, orkActionsConfig, configsDb, actionConfigResolvers) {
+function createActionCaller (net, racks, callTargetsLimit, orkInstance, orkActionsConfig, configsDb, actionConfigResolvers) {
   const caller = Object.create(ActionCaller.prototype)
   caller._net = net
   caller._racks = racks
