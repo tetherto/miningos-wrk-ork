@@ -4,6 +4,12 @@ const test = require('brittle')
 const { hasPermission, hasWritePermission, hasReadPermission, hasReadWritePermission } = require('../../workers/lib/permissions')
 
 test('hasPermission', async (t) => {
+  t.test('should return false when requested permission is falsy', async (t) => {
+    t.ok(!hasPermission(['miner:rw'], null))
+    t.ok(!hasPermission(['miner:rw'], undefined))
+    t.ok(!hasPermission(['miner:rw'], ''))
+  })
+
   t.test('read', async (t) => {
     t.ok(hasPermission([
       'miner:rw',

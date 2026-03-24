@@ -1,8 +1,11 @@
 'use strict'
 
 const test = require('brittle')
+const util = require('util')
+const Hyperbee = require('hyperbee')
+const NetFacility = require('hp-svc-facs-net')
 const WrkProcAggr = require('../../workers/aggr.proc.ork.wrk')
-const { RPC_METHODS } = require('../../workers/lib/constants')
+const { RPC_METHODS, CONFIG_TYPES } = require('../../workers/lib/constants')
 
 // Mock TetherWrkBase dependencies
 class MockTetherWrkBase {
@@ -47,32 +50,55 @@ class MockTetherWrkBase {
   debugError (data, e, alert) {
     // Mock debugError
   }
+
+  _start (cb) {
+    if (cb) queueMicrotask(() => cb())
+  }
 }
 
-// Mock facilities
+// Mock facilities — cache bees by name so _start and tests share the same DBs; Hyperbee prototype for ActionCaller
 class MockStore {
-  async getBee (opts, config) {
+  constructor () {
+    this.bees = new Map()
+  }
+
+  _createBee () {
     const data = new Map()
-    return {
+    const bee = {
       get: async (key) => {
         const value = data.get(key)
         return value ? { value: Buffer.from(JSON.stringify(value)) } : null
       },
       put: async (key, value) => {
-        data.set(key, JSON.parse(value.toString()))
+        const raw = Buffer.isBuffer(value) ? value.toString() : value
+        data.set(key, JSON.parse(raw))
       },
       del: async (key) => {
         data.delete(key)
       },
-      createReadStream: () => {
-        const entries = Array.from(data.entries()).map(([key, value]) => ({
+      createReadStream: (opts = {}) => {
+        let entries = Array.from(data.entries()).map(([key, value]) => ({
           key,
           value: Buffer.from(JSON.stringify(value))
         }))
+        if (opts.gte !== undefined) {
+          const hi = opts.lt !== undefined ? opts.lt : '\uffff'
+          entries = entries.filter(e => e.key >= opts.gte && e.key < hi)
+        }
         return entries
       },
       ready: () => Promise.resolve()
     }
+    Object.setPrototypeOf(bee, Hyperbee.prototype)
+    return bee
+  }
+
+  async getBee (opts) {
+    const name = opts.name
+    if (!this.bees.has(name)) {
+      this.bees.set(name, this._createBee())
+    }
+    return this.bees.get(name)
   }
 }
 
@@ -330,6 +356,7 @@ async function createWorker (conf = {}, ctx = {}) {
     // Initialize actionDb and tailLogAggrDb
     worker.actionDb = await mockStore.getBee({ name: 'action-approver' })
     worker.tailLogAggrDb = await mockStore.getBee({ name: 'tail-log-aggr' }, { keyEncoding: 'utf-8' })
+    worker.configsDb = await mockStore.getBee({ name: 'configs' }, { keyEncoding: 'utf-8' })
 
     // Mock _start method
     worker._start = function (cb) {
@@ -1208,6 +1235,16 @@ test('setGlobalConfig', async (t) => {
       t.is(err.message, 'ERR_GLOBAL_CONFIG_NOT_FOUND', 'should throw correct error')
     }
   })
+
+  t.test('should return null when payload does not update auto sleep flag', async (t) => {
+    const worker = await createWorker({
+      globalConfig: { isAutoSleepAllowed: false, other: 1 }
+    })
+    worker._start(() => {})
+
+    const result = await worker.setGlobalConfig({ otherFlag: true })
+    t.is(result, null, 'should return null')
+  })
 })
 
 test('getWrkConf', async (t) => {
@@ -1561,9 +1598,9 @@ test('tailLogCustomRangeAggr', async (t) => {
 })
 
 test('getWrkExtData', async (t) => {
-  t.test('should get worker ext data', async (t) => {
+  t.test('should get worker ext data without aggregation when type base has no aggr specs', async (t) => {
     const worker = await createWorker({
-      aggrStats: { miner: { ops: {} } }
+      aggrStats: { miner: { ops: { total: { op: 'sum', src: 'value' } } } }
     })
     worker._start(() => {})
 
@@ -1575,6 +1612,32 @@ test('getWrkExtData', async (t) => {
 
     const result = await worker.getWrkExtData({ type: 'wrk-miner-s19' })
     t.ok(Array.isArray(result), 'should return array')
+  })
+
+  t.test('should aggregate ext data when aggrStats matches type prefix', async (t) => {
+    const worker = await createWorker({
+      aggrStats: {
+        miner: {
+          ops: { total: { op: 'sum', src: 'value' } }
+        }
+      }
+    })
+    worker._start(() => {})
+
+    await worker.registerRack({
+      id: 'rack-1',
+      type: 'miner-s19',
+      info: { rpcPublicKey: 'key1' }
+    })
+
+    worker.net_r0.jRequest = async () => [
+      { ts: '1000', value: 10 },
+      { ts: '1000', value: 20 }
+    ]
+
+    const result = await worker.getWrkExtData({ type: 'miner-s19' })
+    t.ok(Array.isArray(result), 'should return array')
+    t.ok(result.length >= 1, 'should have aggregated bucket')
   })
 
   t.test('should throw error for missing type', async (t) => {
@@ -1598,6 +1661,662 @@ test('RPC method registration', async (t) => {
     t.ok(worker.net_r0.handlers, 'should have handlers')
     for (const method of RPC_METHODS) {
       t.ok(worker.net_r0.handlers[method.name], `should register ${method.name}`)
+    }
+  })
+})
+
+function poolConfigFixture (overrides = {}) {
+  return {
+    poolConfigName: 'Test pool',
+    poolUrls: [{
+      url: 'stratum://pool.example.com:3333',
+      workerName: 'w',
+      workerPassword: 'p',
+      pool: 'main'
+    }],
+    ...overrides
+  }
+}
+
+test('config CRUD (pool)', async (t) => {
+  t.test('registerConfig stores pool config', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const cfg = await worker.registerConfig({
+      type: CONFIG_TYPES.POOL,
+      data: poolConfigFixture()
+    })
+
+    t.ok(cfg.id, 'should assign id')
+    t.is(cfg.status, 'approved', 'should default to approved')
+    t.is(cfg.poolConfigName, 'Test pool')
+  })
+
+  t.test('getConfigs lists configs with type prefix stream', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    await worker.registerConfig({ type: CONFIG_TYPES.POOL, data: poolConfigFixture({ poolConfigName: 'A' }) })
+    const list = await worker.getConfigs({ type: CONFIG_TYPES.POOL })
+    t.ok(list.length >= 1, 'should list configs')
+    t.is(list.some(c => c.poolConfigName === 'A'), true)
+  })
+
+  t.test('updateConfig merges pool fields', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const created = await worker.registerConfig({
+      type: CONFIG_TYPES.POOL,
+      data: poolConfigFixture({ description: 'old' })
+    })
+
+    const updated = await worker.updateConfig({
+      type: CONFIG_TYPES.POOL,
+      id: created.id,
+      data: { poolConfigName: 'Renamed', description: 'new desc' }
+    })
+
+    t.is(updated.poolConfigName, 'Renamed')
+    t.is(updated.description, 'new desc')
+  })
+
+  t.test('updateConfig can set status', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const created = await worker.registerConfig({
+      type: CONFIG_TYPES.POOL,
+      data: poolConfigFixture()
+    })
+
+    const updated = await worker.updateConfig({
+      type: CONFIG_TYPES.POOL,
+      id: created.id,
+      data: { status: 'pending' }
+    })
+    t.is(updated.status, 'pending')
+  })
+
+  t.test('deleteConfig removes config', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const created = await worker.registerConfig({
+      type: CONFIG_TYPES.POOL,
+      data: poolConfigFixture()
+    })
+
+    const n = await worker.deleteConfig({ type: CONFIG_TYPES.POOL, id: created.id })
+    t.is(n, 1)
+
+    try {
+      await worker.deleteConfig({ type: CONFIG_TYPES.POOL, id: created.id })
+      t.fail('should throw when missing')
+    } catch (err) {
+      t.is(err.message, 'ERR_CONFIG_NOT_FOUND')
+    }
+  })
+
+  t.test('validation errors', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    try {
+      await worker.registerConfig({ type: CONFIG_TYPES.POOL, data: {} })
+      t.fail('expected throw')
+    } catch (err) {
+      t.is(err.message, 'ERR_POOL_CONFIG_NAME_INVALID')
+    }
+
+    try {
+      await worker.updateConfig({
+        type: CONFIG_TYPES.POOL,
+        id: 'non-existent-config-id',
+        data: { poolConfigName: 'x' }
+      })
+      t.fail('expected throw')
+    } catch (err) {
+      t.is(err.message, 'ERR_CONFIG_NOT_FOUND')
+    }
+
+    const created = await worker.registerConfig({
+      type: CONFIG_TYPES.POOL,
+      data: poolConfigFixture()
+    })
+    try {
+      await worker.updateConfig({
+        type: CONFIG_TYPES.POOL,
+        id: created.id,
+        data: { status: 'invalid-status' }
+      })
+      t.fail('expected throw')
+    } catch (err) {
+      t.is(err.message, 'ERR_STATUS_INVALID')
+    }
+  })
+})
+
+test('prototype _start wires ActionCaller and RPC', async (t) => {
+  // Patch the exact superclass WrkProcAggr uses for `super` (same constructor as in the module graph)
+  const ParentCls = Object.getPrototypeOf(WrkProcAggr.prototype).constructor
+  const origStart = ParentCls.prototype._start
+
+  const worker = await createWorker({
+    aggrData: { agrrTailLogIntvlMs: 60000, aggrTailLogKeys: [] },
+    aggrStats: {},
+    crossAggrAction: { agrrListThingsIntvlMs: 60000 }
+  })
+
+  // ActionCaller instanceof checks — must not replace the whole chain (would drop MockNet.jRequest)
+  Object.setPrototypeOf(worker.net_r0, NetFacility.prototype)
+
+  worker.status = worker.status || {}
+  worker.saveStatus = () => {}
+
+  ParentCls.prototype._start = (cb) => { if (cb) queueMicrotask(() => cb()) }
+  try {
+    await util.promisify(WrkProcAggr.prototype._start).call(worker)
+  } finally {
+    ParentCls.prototype._start = origStart
+  }
+
+  t.ok(worker.actionCaller, 'actionCaller should be set')
+  t.ok(worker.configsDb, 'configsDb should be set')
+  t.ok(typeof worker.net_r0.handlers.echo === 'function', 'echo handler registered')
+
+  await worker.actionCaller.__probeAction([], {})
+  t.pass('proxy routes unknown action names to callTargets')
+})
+
+test('crossAggrActions pushes when automation config is valid', async (t) => {
+  const worker = await createWorker({
+    globalConfig: { isAutoSleepAllowed: true },
+    crossAggrAction: {
+      tagPrefix: 't-cntr',
+      crossThingType: 'miner',
+      action: 'sleepBatch',
+      params: [{}],
+      authPerms: ['miner:w'],
+      listThingsReq: {},
+      crossThingsActionReq: { devicesCondition: [], fields: {} },
+      minActionTsDiff: 0
+    }
+  })
+  worker._start(() => {})
+
+  let listCall = 0
+  worker.net_r0.jRequest = async (pk, method) => {
+    if (method === 'listThings') {
+      listCall++
+      if (listCall === 1) {
+        return [{ tags: ['t-cntr-1'] }]
+      }
+      return [{ id: 'dev-1', tags: ['t-miner', 't-cntr-1'] }]
+    }
+    return null
+  }
+
+  await worker.registerRack({
+    id: 'rack-1',
+    type: 'wrk-miner-s19',
+    info: { rpcPublicKey: 'k1' }
+  })
+
+  await worker.crossAggrActions()
+  t.ok(listCall >= 2, 'should query things twice')
+})
+
+test('aggregateTailLogs runs with empty key list', async (t) => {
+  const worker = await createWorker({
+    globalConfig: { aggrTailLogTimezones: [{ code: 'UTC', offset: 0 }] },
+    aggrData: {
+      aggrTailLogStoreDays: 1,
+      aggrTailLogKeys: [],
+      aggrTailLogApiDelay: 0
+    }
+  })
+  worker._start(() => {})
+
+  await worker.aggregateTailLogs()
+  t.pass('should complete')
+})
+
+test('_loadOptionalConfigs catches loadConf failures', async (t) => {
+  const worker = await createWorker()
+  let sawDebug = false
+  worker.debugError = (msg, err) => {
+    if (String(msg).includes('failed to load config')) sawDebug = true
+  }
+  worker.loadConf = () => {
+    throw new Error('no config file')
+  }
+
+  WrkProcAggr.prototype._loadOptionalConfigs.call(worker)
+  t.ok(sawDebug, 'should log failed optional config load')
+})
+
+test('debugGeneric', async (t) => {
+  const worker = await createWorker()
+  worker._start(() => {})
+  worker.debugGeneric('ping')
+  t.pass('runs without throw')
+})
+
+test('config validation edge cases', async (t) => {
+  t.test('registerConfig rejects missing data and invalid types', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    try {
+      await worker.registerConfig({ type: CONFIG_TYPES.POOL })
+      t.fail('expected throw')
+    } catch (err) {
+      t.is(err.message, 'ERR_CONFIG_DATA_MISSING')
+    }
+
+    try {
+      await worker.registerConfig({ type: 'not-a-config-type', data: poolConfigFixture() })
+      t.fail('expected throw')
+    } catch (err) {
+      t.is(err.message, 'ERR_CONFIG_TYPE_INVALID')
+    }
+  })
+
+  t.test('pool field validation on register', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const base = poolConfigFixture()
+    const tryReg = async (data, msg) => {
+      try {
+        await worker.registerConfig({ type: CONFIG_TYPES.POOL, data })
+        t.fail('expected throw for ' + msg)
+      } catch (err) {
+        t.is(err.message, msg)
+      }
+    }
+
+    await tryReg({ ...base, description: 123 }, 'ERR_DESCRIPTION_INVALID')
+    await tryReg({ ...base, poolUrls: 'x' }, 'ERR_POOL_URLS_INVALID')
+    await tryReg({ ...base, poolUrls: [{ ...base.poolUrls[0], url: null }] }, 'ERR_POOL_URL_INVALID')
+    await tryReg({ ...base, poolUrls: [{ ...base.poolUrls[0], workerName: null }] }, 'ERR_WORKER_NAME_INVALID')
+    await tryReg({ ...base, poolUrls: [{ ...base.poolUrls[0], workerPassword: null }] }, 'ERR_WORKER_PASSWORD_INVALID')
+    await tryReg({ ...base, poolUrls: [{ ...base.poolUrls[0], pool: null }] }, 'ERR_POOL_INVALID')
+  })
+
+  t.test('deleteConfig requires id', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    try {
+      await worker.deleteConfig({ type: CONFIG_TYPES.POOL })
+      t.fail('expected throw')
+    } catch (err) {
+      t.is(err.message, 'ERR_CONFIG_ID_MISSING')
+    }
+  })
+
+  t.test('updateConfig validates merged pool fields', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const created = await worker.registerConfig({
+      type: CONFIG_TYPES.POOL,
+      data: poolConfigFixture()
+    })
+
+    try {
+      await worker.updateConfig({
+        type: CONFIG_TYPES.POOL,
+        id: created.id,
+        data: { poolUrls: [{ url: 1, workerName: 'w', workerPassword: 'p', pool: 'x' }] }
+      })
+      t.fail('expected throw')
+    } catch (err) {
+      t.is(err.message, 'ERR_POOL_URL_INVALID')
+    }
+  })
+})
+
+test('RPC handler — read-only peer and handler errors', async (t) => {
+  const ParentCls = Object.getPrototypeOf(WrkProcAggr.prototype).constructor
+  const origStart = ParentCls.prototype._start
+
+  const worker = await createWorker({
+    aggrData: { agrrTailLogIntvlMs: 60000, aggrTailLogKeys: [] },
+    aggrStats: {},
+    crossAggrAction: { agrrListThingsIntvlMs: 60000 }
+  })
+
+  Object.setPrototypeOf(worker.net_r0, NetFacility.prototype)
+  worker.status = worker.status || {}
+  worker.saveStatus = () => {}
+
+  ParentCls.prototype._start = (cb) => { if (cb) queueMicrotask(() => cb()) }
+  try {
+    await util.promisify(WrkProcAggr.prototype._start).call(worker)
+  } finally {
+    ParentCls.prototype._start = origStart
+  }
+
+  const roKey = Buffer.alloc(32)
+  roKey.fill(0xab)
+  const roHex = roKey.toString('hex')
+  worker.net_r0.conf.allowReadOnly = [roHex]
+
+  try {
+    await worker.net_r0.handlers.pushAction({}, {
+      _mux: { stream: { remotePublicKey: roKey } }
+    })
+    t.fail('write RPC should be denied for read-only key')
+  } catch (err) {
+    t.is(err.message, 'ERR_MISSING_WRITE_PERMISSIONS')
+  }
+
+  let sawAlert = false
+  const origDebug = worker.debugError.bind(worker)
+  worker.debugError = (a, b, alert) => {
+    if (alert) sawAlert = true
+    return origDebug(a, b, alert)
+  }
+  worker.net_r0.handleReply = async () => {
+    throw new Error('handler boom')
+  }
+
+  try {
+    await worker.net_r0.handlers.listRacks({}, {
+      _mux: { stream: { remotePublicKey: Buffer.alloc(32) } }
+    })
+    t.fail('expected throw')
+  } catch (err) {
+    t.is(err.message, 'handler boom')
+    t.ok(sawAlert, 'debugError should run with alert for RPC failure')
+  }
+})
+
+test('setFacs assigns facility handles', async (t) => {
+  const worker = await createWorker()
+  worker._start(() => {})
+  const facs = {
+    interval_0: worker.interval_0,
+    store_s1: worker.store_s1,
+    actionApprover_0: worker.actionApprover_0
+  }
+  WrkProcAggr.prototype.setFacs.call(worker, {
+    interval_0: { tag: 'i' },
+    store_s1: { tag: 's' },
+    actionApprover_0: { tag: 'a' }
+  })
+  t.is(worker.interval_0.tag, 'i')
+  t.is(worker.store_s1.tag, 's')
+  t.is(worker.actionApprover_0.tag, 'a')
+  WrkProcAggr.prototype.setFacs.call(worker, facs)
+})
+
+test('pushAction — invalid rack errors, reqVotes, rackType filter', async (t) => {
+  t.test('skips targets whose error matches INVALID_ACTIONS_ERRORS', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+    worker.actionCaller = {
+      getWriteCalls: async () => ({
+        targets: {
+          'rack-bad': { reqVotes: 1, calls: [], error: 'UNKNOWN_METHOD on device' },
+          'rack-good': { reqVotes: 1, calls: [{ id: 'thing1' }] }
+        },
+        requiredPerms: ['miner:rw'],
+        approvalPerms: []
+      })
+    }
+    const result = await worker.pushAction({
+      query: {},
+      action: 'reboot',
+      params: [],
+      voter: 'v',
+      authPerms: ['miner:rw']
+    })
+    t.ok(result.id, 'should still push when one rack is valid')
+  })
+
+  t.test('uses highest reqVotes across targets', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+    let captured
+    worker.actionApprover_0 = {
+      ...worker.actionApprover_0,
+      async pushAction (opts) {
+        captured = opts
+        return { id: 'a1', data: {} }
+      }
+    }
+    worker.actionCaller = {
+      getWriteCalls: async () => ({
+        targets: {
+          r1: { reqVotes: 2, calls: [{ id: 'a' }] },
+          r2: { reqVotes: 7, calls: [{ id: 'b' }] }
+        },
+        requiredPerms: [],
+        approvalPerms: []
+      })
+    }
+    await worker.pushAction({
+      query: {},
+      action: 'reboot',
+      params: [],
+      voter: 'v',
+      authPerms: []
+    })
+    t.is(captured.reqVotesPos, 7)
+  })
+
+  t.test('filters targets by rackType', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+    let captured
+    worker.actionApprover_0 = {
+      ...worker.actionApprover_0,
+      async pushAction (opts) {
+        captured = opts
+        return { id: 'x', data: {} }
+      }
+    }
+    worker.actionCaller = {
+      getWriteCalls: async () => ({
+        targets: {
+          minerRack: { reqVotes: 1, calls: [{ id: 'm1' }] },
+          psuRack: { reqVotes: 1, calls: [{ id: 'p1' }] }
+        },
+        requiredPerms: [],
+        approvalPerms: []
+      })
+    }
+    await worker.registerRack({
+      id: 'minerRack',
+      type: 'wrk-miner-s19',
+      info: { rpcPublicKey: 'k1' }
+    })
+    await worker.registerRack({
+      id: 'psuRack',
+      type: 'wrk-psu',
+      info: { rpcPublicKey: 'k2' }
+    })
+    await worker.pushAction({
+      query: {},
+      action: 'reboot',
+      params: [],
+      voter: 'v',
+      authPerms: [],
+      rackType: 'wrk-miner'
+    })
+    t.ok(captured.payload[1].minerRack)
+    t.ok(captured.payload[1].psuRack)
+    t.absent(captured.payload[1].minerRack.reqVotes, 'processed rack has reqVotes stripped')
+    t.ok(captured.payload[1].psuRack.reqVotes === 1, 'skipped rack is left untouched')
+  })
+})
+
+const minerAggrStats = {
+  miner: {
+    ops: { total: { op: 'sum', src: 'value' } }
+  }
+}
+
+test('tailLog — success path and tailLogMulti', async (t) => {
+  t.test('aggregates tail samples when aggrStats matches type', async (t) => {
+    const worker = await createWorker({ aggrStats: minerAggrStats })
+    worker._start(() => {})
+    await worker.registerRack({
+      id: 'rack-1',
+      type: 'miner-s19',
+      info: { rpcPublicKey: 'rpc1' }
+    })
+    worker.net_r0.jRequest = async (pk, method) => {
+      if (method === 'tailLog') {
+        return [
+          { ts: 5000, value: 1, tag: 'x' },
+          { ts: 5000, value: 2, tag: 'y' }
+        ]
+      }
+      return []
+    }
+    const out = await worker.tailLog({
+      type: 'miner-s19',
+      key: 'hr',
+      aggrFields: { total: 1 }
+    })
+    t.ok(Array.isArray(out), 'should return projection array')
+    t.ok(out.length >= 1, 'should have aggregated row')
+  })
+
+  t.test('uses aggrTimes ranges and cloneDeep when multiple windows', async (t) => {
+    const worker = await createWorker({ aggrStats: minerAggrStats })
+    worker._start(() => {})
+    await worker.registerRack({
+      id: 'rack-1',
+      type: 'miner-s19',
+      info: { rpcPublicKey: 'rpc1' }
+    })
+    worker.net_r0.jRequest = async (pk, method) => {
+      if (method === 'tailLog') {
+        return [{ ts: 1500, value: 5, extra: 1 }]
+      }
+      return []
+    }
+    const out = await worker.tailLog({
+      type: 'miner-s19',
+      key: 'hr',
+      aggrFields: { total: 1 },
+      aggrTimes: [
+        { start: 1000, end: 2000 },
+        { start: 1200, end: 1800 }
+      ]
+    })
+    t.ok(Array.isArray(out))
+  })
+})
+
+test('tailLogMulti — success', async (t) => {
+  const worker = await createWorker({ aggrStats: minerAggrStats })
+  worker._start(() => {})
+  await worker.registerRack({
+    id: 'rack-1',
+    type: 'miner-s19',
+    info: { rpcPublicKey: 'rpc1' }
+  })
+  worker.net_r0.jRequest = async (pk, method) => {
+    if (method === 'tailLog') {
+      return [{ ts: 1, value: 1, x: 1 }]
+    }
+    return []
+  }
+  const rows = await worker.tailLogMulti({
+    keys: [
+      { type: 'miner-s19', key: 'a' },
+      { type: 'miner-s19', key: 'b' }
+    ],
+    aggrFields: { total: 1 }
+  })
+  t.is(rows.length, 2)
+  t.ok(Array.isArray(rows[0]))
+})
+
+test('getWrkSettings and saveWrkSettings — RPC failure', async (t) => {
+  t.test('getWrkSettings throws ERR_GET_SETTINGS_FAILED', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+    await worker.registerRack({
+      id: 'rack-1',
+      type: 'wrk-miner-s19',
+      info: { rpcPublicKey: 'k1' }
+    })
+    worker.net_r0.jRequest = async () => {
+      throw new Error('rpc failed')
+    }
+    try {
+      await worker.getWrkSettings({ rackId: 'rack-1' })
+      t.fail('expected throw')
+    } catch (err) {
+      t.is(err.message, 'ERR_GET_SETTINGS_FAILED')
+    }
+  })
+
+  t.test('saveWrkSettings throws ERR_SAVE_SETTINGS_FAILED', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+    await worker.registerRack({
+      id: 'rack-1',
+      type: 'wrk-miner-s19',
+      info: { rpcPublicKey: 'k1' }
+    })
+    worker.net_r0.jRequest = async () => {
+      throw new Error('rpc failed')
+    }
+    try {
+      await worker.saveWrkSettings({ rackId: 'rack-1', entries: { a: 1 } })
+      t.fail('expected throw')
+    } catch (err) {
+      t.is(err.message, 'ERR_SAVE_SETTINGS_FAILED')
+    }
+  })
+})
+
+test('updateConfig — pool validation on merge', async (t) => {
+  t.test('rejects empty poolConfigName string', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+    const created = await worker.registerConfig({
+      type: CONFIG_TYPES.POOL,
+      data: poolConfigFixture()
+    })
+    try {
+      await worker.updateConfig({
+        type: CONFIG_TYPES.POOL,
+        id: created.id,
+        data: { poolConfigName: '' }
+      })
+      t.fail('expected throw')
+    } catch (err) {
+      t.is(err.message, 'ERR_POOL_CONFIG_NAME_INVALID')
+    }
+  })
+
+  t.test('rejects empty poolUrls array on update', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+    const created = await worker.registerConfig({
+      type: CONFIG_TYPES.POOL,
+      data: poolConfigFixture()
+    })
+    try {
+      await worker.updateConfig({
+        type: CONFIG_TYPES.POOL,
+        id: created.id,
+        data: { poolUrls: [] }
+      })
+      t.fail('expected throw')
+    } catch (err) {
+      t.is(err.message, 'ERR_POOL_URLS_INVALID')
     }
   })
 })

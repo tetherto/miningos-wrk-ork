@@ -1,7 +1,7 @@
 'use strict'
 
 const test = require('brittle')
-const { daysTo24HrIntervals, isCurrentDay, getNestedProperty } = require('../../workers/lib/util')
+const { daysTo24HrIntervals, isCurrentDay, getNestedProperty, sortThings, getValue } = require('../../workers/lib/util')
 
 test('daysTo24HrIntervals', async (t) => {
   t.test('should generate intervals for 1 day', async (t) => {
@@ -115,5 +115,50 @@ test('getNestedProperty', async (t) => {
       ]
     }
     t.is(getNestedProperty(obj, ['items', '0', 'name']), 'first', 'should handle array indices')
+  })
+})
+
+test('getValue', async (t) => {
+  t.test('should read nested path', async (t) => {
+    const obj = { a: { b: { c: 7 } } }
+    t.is(getValue(obj, 'a.b.c'), 7)
+  })
+
+  t.test('should return undefined for missing path', async (t) => {
+    t.is(getValue({ a: 1 }, 'a.b.c'), undefined)
+  })
+})
+
+test('sortThings', async (t) => {
+  t.test('should return 1 when sortBy is empty', async (t) => {
+    t.is(sortThings({ a: 1 }, { a: 2 }, {}), 1)
+    t.is(sortThings({ a: 1 }, { a: 2 }, null), 1)
+  })
+
+  t.test('should sort numerically when parts are numeric', async (t) => {
+    const a = { name: 'item2' }
+    const b = { name: 'item10' }
+    t.ok(sortThings(a, b, { name: 1 }) < 0, '2 before 10')
+  })
+
+  t.test('should sort lexicographically when not numeric', async (t) => {
+    const x = { name: 'b' }
+    const y = { name: 'a' }
+    t.ok(sortThings(x, y, { name: 1 }) > 0)
+  })
+
+  t.test('should order undefined vs defined keys', async (t) => {
+    const cmp = sortThings({ k: undefined }, { k: 1 }, { k: 1 })
+    t.ok(typeof cmp === 'number')
+    t.not(cmp, 0, 'undefined and 1 should not be equal for sort')
+  })
+
+  t.test('should use length diff when shared prefix matches', async (t) => {
+    t.ok(sortThings({ id: 'a' }, { id: 'ab' }, { id: 1 }) < 0, 'shorter key sorts first ascending')
+  })
+
+  t.test('should return 0 when all sort keys tie', async (t) => {
+    const row = { n: 5 }
+    t.is(sortThings(row, { ...row }, { n: 1 }), 0)
   })
 })

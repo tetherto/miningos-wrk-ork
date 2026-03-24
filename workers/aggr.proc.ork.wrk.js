@@ -616,8 +616,10 @@ class WrkProcAggr extends TetherWrkBase {
   async _shouldSkipRackType (type, rack) {
     if (!type) return false
     const rackEntry = await this.racks.get(rack)
-    const rackData = rackEntry ? JSON.parse(rackEntry.toString()) : null
-    return (rackData && rackData.type !== type && !rackData.type.startsWith(`${type}-`))
+    if (!rackEntry) return false
+    const raw = rackEntry.value != null ? rackEntry.value : rackEntry
+    const rackData = JSON.parse(raw.toString())
+    return rackData.type !== type && !rackData.type.startsWith(`${type}-`)
   }
 
   async pushAction (req) {
