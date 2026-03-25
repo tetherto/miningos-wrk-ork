@@ -23,6 +23,7 @@
     "worker.js",
     "workers/"
   ],
+  "type": "commonjs",
   "bin": {
     "miningos-wrk-ork": "worker.js"
   },  
