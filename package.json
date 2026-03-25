@@ -1,7 +1,8 @@
 {
-  "name": "miningos-wrk-ork",
-  "version": "0.0.1",
+  "name": "@tetherto/miningos-wrk-ork",
+  "version": "1.0.0",
   "description": "MiningOS Ork Worker",
+  "main": "worker.js",
   "keywords": [
     "tether"
   ],
@@ -11,9 +12,20 @@
     "type": "git",
     "url": "git+https://github.com/tetherto/miningos-wrk-ork.git"
   },
-  "engine": {
-    "node": ">=20.0"
+  "homepage": "https://github.com/tetherto/miningos-wrk-ork#readme",
+  "bugs": {
+    "url": "https://github.com/tetherto/miningos-wrk-ork/issues"
   },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "worker.js",
+    "workers/"
+  ],
+  "bin": {
+    "miningos-wrk-ork": "worker.js"
+  },  
   "scripts": {
     "lint": "standard",
     "lint:fix": "standard --fix",
