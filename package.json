@@ -1,6 +1,6 @@
 {
   "name": "@tetherto/miningos-wrk-ork",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "MiningOS Ork Worker",
   "main": "worker.js",
   "keywords": [
