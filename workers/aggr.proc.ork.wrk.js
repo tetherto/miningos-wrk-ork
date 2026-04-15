@@ -15,12 +15,23 @@ const {
   COMMENT_ACTION,
   INVALID_ACTIONS_ERRORS,
   DEFAULT_TIMEZONE,
+  DISALLOWED_QUERY_OPERATORS,
   CONFIG_TYPES,
   DEFAULT_ACTION_CONFIG_RESOLVERS
 } = require('./lib/constants')
 const aggrCrossthg = require('./lib/aggr.crossthg')
 const { setTimeout: sleep } = require('timers/promises')
 const { createDataProxy } = require('./lib/data.proxy')
+
+const MAX_QUERIES_COUNT = 50
+const MAX_SUFFIX_LENGTH = 200
+const MAX_REGEX_LENGTH = 200
+const ALLOWED_QUERY_OPERATORS = new Set([
+  '$gt', '$gte', '$lt', '$lte', '$eq', '$ne',
+  '$in', '$nin', '$regex', '$options', '$exists',
+  '$elemMatch', '$not', '$type', '$size',
+  '$and', '$or', '$nor'
+])
 
 class WrkProcAggr extends TetherWrkBase {
   constructor (conf, ctx) {
@@ -878,6 +889,32 @@ class WrkProcAggr extends TetherWrkBase {
     return await this._groupBatchActions(filteredActions, type)
   }
 
+  _sanitizeMingoQuery (obj) {
+    if (obj === null || obj === undefined || typeof obj !== 'object') return
+    if (Array.isArray(obj)) {
+      for (const item of obj) {
+        this._sanitizeMingoQuery(item)
+      }
+      return
+    }
+    for (const key of Object.keys(obj)) {
+      if (key.startsWith('$')) {
+        if (DISALLOWED_QUERY_OPERATORS.includes(key)) {
+          throw new Error('ERR_QUERY_OPERATOR_NOT_ALLOWED')
+        }
+        if (key === '$regex' && typeof obj[key] === 'string' && obj[key].length > MAX_REGEX_LENGTH) {
+          throw new Error('ERR_QUERY_REGEX_TOO_LONG')
+        }
+        if (!ALLOWED_QUERY_OPERATORS.has(key)) {
+          throw new Error('ERR_QUERY_OPERATOR_NOT_ALLOWED')
+        }
+      }
+      if (typeof obj[key] === 'object' && obj[key] !== null) {
+        this._sanitizeMingoQuery(obj[key])
+      }
+    }
+  }
+
   _filterData (data, req = {}) {
     if (!isNil(req.query) || !isNil(req.fields)) {
       const query = new mingo.Query(req.query || {})
@@ -893,6 +930,10 @@ class WrkProcAggr extends TetherWrkBase {
       throw new Error('ERR_QUERIES_INVALID')
     }
 
+    if (queries.length > MAX_QUERIES_COUNT) {
+      throw new Error('ERR_QUERIES_LIMIT_EXCEEDED')
+    }
+
     queries.forEach(query => {
       if (!query.type || typeof query.type !== 'string') {
         throw new Error('ERR_QUERIES_TYPE_INVALID')
@@ -903,7 +944,13 @@ class WrkProcAggr extends TetherWrkBase {
       const actions = await this._queryActionsByType(type, filter, opts, groupBatch)
 
       let finalQuery = query || {}
+      this._sanitizeMingoQuery(finalQuery)
+      if (fields) this._sanitizeMingoQuery(fields)
+
       if (suffix) {
+        if (suffix.length > MAX_SUFFIX_LENGTH) {
+          throw new Error('ERR_SUFFIX_TOO_LONG')
+        }
         const escapedSuffix = suffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         finalQuery = {
           ...finalQuery,
