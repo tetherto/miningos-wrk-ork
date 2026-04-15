@@ -213,6 +213,22 @@
         "op": "obj_concat",
         "src": "hashrate_mhs_5m_active_container_group_cnt"
       },
+      "hashrate_mhs_5m_pdu_rack_group_sum_aggr": {
+        "op": "obj_concat",
+        "src": "hashrate_mhs_5m_pdu_rack_group_sum"
+      },
+      "hashrate_mhs_5m_pdu_rack_group_avg_aggr": {
+        "op": "obj_concat",
+        "src": "hashrate_mhs_5m_pdu_rack_group_avg"
+      },
+      "efficiency_w_ths_pdu_rack_group_avg_aggr": {
+        "op": "obj_concat",
+        "src": "efficiency_w_ths_pdu_rack_group_avg"
+      },
+      "power_w_pdu_rack_group_sum_aggr": {
+        "op": "obj_concat",
+        "src": "power_w_pdu_rack_group_sum"
+      },
       "nominal_hashrate_mhs_avg_aggr": {
         "op": "avg",
         "src": "nominal_hashrate_mhs_avg"
