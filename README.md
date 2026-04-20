@@ -1,4 +1,4 @@
-# miningos-wrk-ork
+<img width="1131" height="862" alt="image" src="https://github.com/user-attachments/assets/9f2a216f-6124-4bac-a3a8-b19fea96ce65" /># miningos-wrk-ork
 
 ## Table of Contents
 
@@ -58,6 +58,16 @@
 ---
 
 ## Architecture
+
+### Architectural Separation
+
+MiningOS distinguishes between three conceptual layers:
+
+- **Policy** – What should happen and under which conditions
+- **Execution** – How actions are performed
+- **Incentives** – Why certain behaviours may be economically encouraged
+
+This separation maintains modularity and prevents tight coupling between operational logic and economic mechanisms.
 
 ### Class Hierarchy
 
