@@ -3,7 +3,7 @@
 const test = require('brittle')
 const util = require('util')
 const Hyperbee = require('hyperbee')
-const NetFacility = require('hp-svc-facs-net')
+const NetFacility = require('@tetherto/hp-svc-facs-net')
 const WrkProcAggr = require('../../workers/aggr.proc.ork.wrk')
 const { RPC_METHODS, CONFIG_TYPES } = require('../../workers/lib/constants')
 
@@ -276,7 +276,7 @@ async function createWorker (conf = {}, ctx = {}) {
   const mockInterval = new MockInterval()
 
   // Replace TetherWrkBase temporarily to prevent actual initialization
-  const basePath = require.resolve('tether-wrk-base/workers/base.wrk.tether')
+  const basePath = require.resolve('@tetherto/tether-wrk-base/workers/base.wrk.tether')
   const cached = require.cache[basePath]
 
   require.cache[basePath] = {
