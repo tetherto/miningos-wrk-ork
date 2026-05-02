@@ -1,9 +1,9 @@
 'use strict'
 
 const async = require('async')
-const TetherWrkBase = require('tether-wrk-base/workers/base.wrk.tether')
+const TetherWrkBase = require('@tetherto/tether-wrk-base/workers/base.wrk.tether')
 const debug = require('debug')('ork:aggr')
-const gLibStats = require('miningos-lib-stats')
+const gLibStats = require('@tetherto/miningos-lib-stats')
 const mingo = require('mingo')
 const ActionCaller = require('./lib/action.caller')
 const { cloneDeep, isNil, isEmpty } = require('@bitfinex/lib-js-util-base')
@@ -69,11 +69,11 @@ class WrkProcAggr extends TetherWrkBase {
     super.init()
 
     this.setInitFacs([
-      ['fac', 'bfx-facs-interval', '0', '0', {}, -10],
-      ['fac', 'hp-svc-facs-store', 's1', 's1', {
+      ['fac', '@bitfinex/bfx-facs-interval', '0', '0', {}, -10],
+      ['fac', '@tetherto/hp-svc-facs-store', 's1', 's1', {
         storeDir: `store/${this.ctx.cluster}-db`
       }, -5],
-      ['fac', 'svc-facs-action-approver', '0', '0', {}, 20]
+      ['fac', '@tetherto/svc-facs-action-approver', '0', '0', {}, 20]
     ])
   }
 

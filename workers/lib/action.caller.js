@@ -1,7 +1,7 @@
 'use strict'
 
 const async = require('async')
-const NetFacility = require('hp-svc-facs-net')
+const NetFacility = require('@tetherto/hp-svc-facs-net')
 const Hyperbee = require('hyperbee')
 const mingo = require('mingo')
 const { isPlainObject } = require('@bitfinex/lib-js-util-base')
