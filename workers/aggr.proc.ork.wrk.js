@@ -230,6 +230,21 @@ class WrkProcAggr extends TetherWrkBase {
     }, 0)
   }
 
+  async storeWorkOrderFile (req) {
+    if (!req.rackId) throw new Error('ERR_RACK_ID_INVALID')
+    return this.dataProxy.requestRackData(req.rackId, 'storeWorkOrderFile', req, { timeout: 30000 })
+  }
+
+  async loadWorkOrderFile (req) {
+    if (!req.rackId) throw new Error('ERR_RACK_ID_INVALID')
+    return this.dataProxy.requestRackData(req.rackId, 'loadWorkOrderFile', req, { timeout: 30000 })
+  }
+
+  async removeWorkOrderFile (req) {
+    if (!req.rackId) throw new Error('ERR_RACK_ID_INVALID')
+    return this.dataProxy.requestRackData(req.rackId, 'removeWorkOrderFile', req, { timeout: 30000 })
+  }
+
   async aggregateTailLogs () {
     if (this.aggregatingTailLogs) return
     this.aggregatingTailLogs = true
