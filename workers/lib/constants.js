@@ -86,9 +86,9 @@ const RPC_METHODS = [
   { name: 'getWrkSettings', op: 'r' },
   { name: 'saveWrkSettings', op: 'w' },
   { name: 'getConfigs', op: 'r' },
-  { name: 'storeWorkOrderFile', op: 'w' },
-  { name: 'loadWorkOrderFile', op: 'r' },
-  { name: 'removeWorkOrderFile', op: 'w' }
+  { name: 'storeFile', op: 'w' },
+  { name: 'loadFile', op: 'r' },
+  { name: 'removeFile', op: 'w' }
 ]
 
 const INVALID_ACTIONS_ERRORS = [
