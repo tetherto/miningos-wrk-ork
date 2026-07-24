@@ -416,7 +416,11 @@
       "transactions":{
         "op": "arr_concat",
         "src": "transactions"
-      },     
+      },
+      "hourlyRevenues": {
+        "op": "arr_concat",
+        "src": "hourlyRevenues"
+      },
       "blocksData":{
         "op": "obj_concat",
         "src": "blocksData"
