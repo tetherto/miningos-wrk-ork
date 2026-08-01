@@ -375,6 +375,18 @@
       }
     }
   },
+  "dcs": {
+    "ops": {
+      "alerts_aggr": {
+        "op": "alerts_aggr",
+        "src": "alerts_cnt"
+      },
+      "site_power_w": {
+        "op": "sum",
+        "src": "site_power_w"
+      }
+    }
+  },
   "sensor": {
     "ops": {
       "alerts_aggr": {
@@ -385,6 +397,10 @@
   },
   "minerpool": {
     "ops": {
+      "alerts": {
+        "op": "arr_concat",
+        "src": "alerts"
+      },
       "stats": {
         "op": "arr_concat",
         "src": "stats"
@@ -400,7 +416,11 @@
       "transactions":{
         "op": "arr_concat",
         "src": "transactions"
-      },     
+      },
+      "hourlyRevenues": {
+        "op": "arr_concat",
+        "src": "hourlyRevenues"
+      },
       "blocksData":{
         "op": "obj_concat",
         "src": "blocksData"
