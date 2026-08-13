@@ -384,6 +384,10 @@
       "site_power_w": {
         "op": "sum",
         "src": "site_power_w"
+      },
+      "by_meter_power_w": {
+        "op": "obj_concat",
+        "src": "by_meter_power_w"
       }
     }
   },
