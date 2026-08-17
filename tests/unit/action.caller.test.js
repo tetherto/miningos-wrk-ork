@@ -2,7 +2,7 @@
 
 const test = require('brittle')
 const ActionCaller = require('../../workers/lib/action.caller')
-const { ACTION_TYPES } = require('../../workers/lib/constants')
+const { ACTION_TYPES, READ_ONLY_ACTIONS } = require('../../workers/lib/constants')
 
 // Mock NetFacility - we'll bypass instanceof checks in tests
 class MockNetFacility {
@@ -49,6 +49,7 @@ function createActionCaller (net, racks, callTargetsLimit, orkInstance, orkActio
   caller._actionConfigResolvers = actionConfigResolvers || {}
   caller.rackActions = new Set([ACTION_TYPES.REGISTER_THING, ACTION_TYPES.UPDATE_THING, ACTION_TYPES.FORGET_THINGS, ACTION_TYPES.RACK_REBOOT])
   caller.orkActions = new Set([ACTION_TYPES.REGISTER_CONFIG, ACTION_TYPES.UPDATE_CONFIG, ACTION_TYPES.DELETE_CONFIG])
+  caller.readOnlyActions = new Set(READ_ONLY_ACTIONS)
   caller._callTargetsLimit = callTargetsLimit || 50
   return caller
 }
@@ -264,6 +265,49 @@ test('ActionCaller getWriteCalls', async (t) => {
     const r = await caller.getWriteCalls({}, ACTION_TYPES.RACK_REBOOT, [[]], ['miner:w'])
     t.ok(r.targets.r1 && r.targets.r2)
     t.is(net.jRequestCalls.length, 2)
+  })
+})
+
+test('ActionCaller getWriteCalls permission level per action', async (t) => {
+  // A rack whose worker reports one call, so a target survives whenever the
+  // permission check lets the rack through.
+  const callerFor = () => {
+    const net = new MockNetFacility()
+    net.jRequest = async (publicKey, method, params, opts) => {
+      net.jRequestCalls.push({ publicKey, method, params, opts })
+      return { calls: [{ id: 'miner-1', tags: [] }], reqVotes: 1 }
+    }
+    const racks = new MockHyperbee({
+      r1: { id: 'r1', type: 'miner-s19', info: { rpcPublicKey: 'a1' } }
+    })
+    return createActionCaller(net, racks, 50, null, {}, null, {})
+  }
+
+  t.test('read-only action accepts a read-level permission', async (t) => {
+    const r = await callerFor().getWriteCalls({}, ACTION_TYPES.DOWNLOAD_LOGS, [], ['miner:r'])
+
+    t.is(Object.keys(r.targets).length, 1, 'should route to the miner rack')
+    t.alike(r.requiredPerms, ['miner'], 'should report the miner base type')
+  })
+
+  t.test('read-only action still accepts a read-write permission', async (t) => {
+    const r = await callerFor().getWriteCalls({}, ACTION_TYPES.DOWNLOAD_LOGS, [], ['miner:rw'])
+
+    t.is(Object.keys(r.targets).length, 1, 'should route to the miner rack')
+  })
+
+  t.test('read-only action is denied without any miner permission', async (t) => {
+    const r = await callerFor().getWriteCalls({}, ACTION_TYPES.DOWNLOAD_LOGS, [], ['container:rw'])
+
+    t.is(Object.keys(r.targets).length, 0, 'should route nowhere')
+  })
+
+  t.test('mutating action still demands the write level', async (t) => {
+    const readOnly = await callerFor().getWriteCalls({}, ACTION_TYPES.REBOOT, [], ['miner:r'])
+    t.is(Object.keys(readOnly.targets).length, 0, 'read level must not reach a reboot')
+
+    const writer = await callerFor().getWriteCalls({}, ACTION_TYPES.REBOOT, [], ['miner:rw'])
+    t.is(Object.keys(writer.targets).length, 1, 'write level should reach a reboot')
   })
 })
 
