@@ -353,6 +353,9 @@ class ActionCaller {
       try {
         const result = await this._callThing(rack, call.id, action, params, callOpts)
         call.result = result
+        if (result?.success === false) {
+          call.error = result.error_msg || result.error || `ERR_ACTION_FAILED:${action}`
+        }
       } catch (err) {
         call.error = err.message
       }
