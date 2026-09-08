@@ -112,6 +112,13 @@ const INSTANT_ACTIONS = new Set([
 
 const INSTANT_ACTION_CALL_TIMEOUT_MS = 10000
 
+// Per-action rack-call timeouts for actions that outlive the default 30s RPC timeout.
+// downloadLogs streams a multi-MB archive from the miner; the miner worker's own
+// budget is up to 3 attempts x 60s socket timeout, so the call must outlast that.
+const ACTION_CALL_TIMEOUTS_MS = {
+  downloadLogs: 210000
+}
+
 const DEFAULT_TIMEZONE = 'UTC'
 
 const DISALLOWED_QUERY_OPERATORS = ['$where', '$expr']
@@ -151,6 +158,7 @@ module.exports = {
   INVALID_ACTIONS_ERRORS,
   INSTANT_ACTIONS,
   INSTANT_ACTION_CALL_TIMEOUT_MS,
+  ACTION_CALL_TIMEOUTS_MS,
   DEFAULT_TIMEZONE,
   DISALLOWED_QUERY_OPERATORS,
   CONFIG_TYPES,

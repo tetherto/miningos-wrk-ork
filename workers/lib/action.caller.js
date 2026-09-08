@@ -5,7 +5,7 @@ const NetFacility = require('@tetherto/hp-svc-facs-net')
 const Hyperbee = require('hyperbee')
 const mingo = require('mingo')
 const { isPlainObject } = require('@bitfinex/lib-js-util-base')
-const { ACTION_TYPES, READ_ONLY_ACTIONS } = require('./constants')
+const { ACTION_TYPES, READ_ONLY_ACTIONS, ACTION_CALL_TIMEOUTS_MS } = require('./constants')
 const { hasReadPermission, hasWritePermission } = require('./permissions')
 
 class ActionCaller {
@@ -345,9 +345,13 @@ class ActionCaller {
       ([rack, entry]) => entry.calls.map(call => [rack, call])
     ).flat(1)
 
+    const callOpts = !opts.timeout && ACTION_CALL_TIMEOUTS_MS[action]
+      ? { ...opts, timeout: ACTION_CALL_TIMEOUTS_MS[action] }
+      : opts
+
     await async.eachLimit(calls, this._callTargetsLimit, async ([rack, call]) => {
       try {
-        const result = await this._callThing(rack, call.id, action, params, opts)
+        const result = await this._callThing(rack, call.id, action, params, callOpts)
         call.result = result
       } catch (err) {
         call.error = err.message
