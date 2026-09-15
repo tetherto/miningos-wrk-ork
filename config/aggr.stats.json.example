@@ -436,6 +436,10 @@
       "workersCount":{
         "op": "sum",
         "src": "count"
+      },
+      "hashrateHistory":{
+        "op": "arr_concat",
+        "src": "hashrateHistory"
       }
     }
   },
