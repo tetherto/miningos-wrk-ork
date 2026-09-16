@@ -1282,7 +1282,7 @@ class WrkProcAggr extends TetherWrkBase {
       if (!poolUrl.workerName || typeof poolUrl.workerName !== 'string') {
         throw new Error('ERR_WORKER_NAME_INVALID')
       }
-      if (!poolUrl.workerPassword || typeof poolUrl.workerPassword !== 'string') {
+      if (typeof poolUrl.workerPassword !== 'string') {
         throw new Error('ERR_WORKER_PASSWORD_INVALID')
       }
       if (!poolUrl.pool || typeof poolUrl.pool !== 'string') {
@@ -1373,7 +1373,7 @@ class WrkProcAggr extends TetherWrkBase {
           if (!poolUrl.workerName || typeof poolUrl.workerName !== 'string') {
             throw new Error('ERR_WORKER_NAME_INVALID')
           }
-          if (!poolUrl.workerPassword || typeof poolUrl.workerPassword !== 'string') {
+          if (typeof poolUrl.workerPassword !== 'string') {
             throw new Error('ERR_WORKER_PASSWORD_INVALID')
           }
           if (!poolUrl.pool || typeof poolUrl.pool !== 'string') {
