@@ -6,6 +6,7 @@ const debug = require('debug')('ork:aggr')
 const gLibStats = require('@tetherto/miningos-lib-stats')
 const mingo = require('mingo')
 const ActionCaller = require('./lib/action.caller')
+const { hasWritePermission } = require('./lib/permissions')
 const { cloneDeep, isNil, isEmpty } = require('@bitfinex/lib-js-util-base')
 const { differenceInDays, addDays } = require('date-fns')
 const { daysTo24HrIntervals, isCurrentDay, sortThings } = require('./lib/util')
@@ -878,7 +879,7 @@ class WrkProcAggr extends TetherWrkBase {
     // Use approvalPerms (payload[3]) if present, fallback to requiredPerms (payload[2])
     // approvalPerms controls who can vote/approve, requiredPerms controls who can submit
     const approvalPerms = data.payload[3] || data.payload[2]
-    if (!approvalPerms.every(p => authPerms.includes(p))) {
+    if (!approvalPerms.every(p => hasWritePermission(authPerms, p))) {
       throw new Error('ERR_ACTION_DENIED')
     }
 

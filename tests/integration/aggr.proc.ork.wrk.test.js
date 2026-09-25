@@ -1046,7 +1046,7 @@ test('voteAction', async (t) => {
 
     const action = await worker.actionApprover_0.pushAction({
       action: 'reboot',
-      payload: [['param1'], { 'rack-1': { calls: [] } }, ['miner:rw']],
+      payload: [['param1'], { 'rack-1': { calls: [] } }, ['miner']],
       voter: 'test@example.com',
       reqVotesPos: 1,
       reqVotesNeg: 1
@@ -1068,7 +1068,7 @@ test('voteAction', async (t) => {
 
     const action = await worker.actionApprover_0.pushAction({
       action: 'reboot',
-      payload: [['param1'], { 'rack-1': { calls: [] } }, ['miner:rw']],
+      payload: [['param1'], { 'rack-1': { calls: [] } }, ['miner']],
       voter: 'test@example.com',
       reqVotesPos: 1,
       reqVotesNeg: 1
