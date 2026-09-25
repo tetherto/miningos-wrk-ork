@@ -826,6 +826,22 @@ class WrkProcAggr extends TetherWrkBase {
     return 1
   }
 
+  _redactAction (action) {
+    const items = Array.isArray(action.params) ? [...action.params] : []
+    for (const target of Object.values(action.targets || {})) {
+      target?.calls?.forEach(call => items.push(call?.result))
+    }
+    for (const item of items) {
+      if (item?.opts) {
+        delete item.opts.username
+        delete item.opts.password
+      }
+      for (const poolUrls of [item?.poolUrls, item?.data?.poolUrls]) {
+        poolUrls?.forEach?.(u => { if (u) delete u.workerPassword })
+      }
+    }
+  }
+
   async getAction (req) {
     const { id, type } = req
     const { data } = await this.actionApprover_0.getAction(type, id)
@@ -835,6 +851,7 @@ class WrkProcAggr extends TetherWrkBase {
     data.targets = data.payload[1]
     data.params = data.payload[0]
     delete data.payload
+    this._redactAction(data)
 
     return data
   }
@@ -857,6 +874,7 @@ class WrkProcAggr extends TetherWrkBase {
           action.targets = action.payload[1]
           action.params = action.payload[0]
           delete action.payload
+          this._redactAction(action)
           return { type, action }
         }
       }
@@ -917,6 +935,7 @@ class WrkProcAggr extends TetherWrkBase {
       entry.targets = entry.payload[1]
       entry.params = entry.payload[0]
       delete entry.payload
+      this._redactAction(entry)
       for (const target of Object.values(entry.targets)) {
         target.calls?.forEach(call => {
           delete call.tags
