@@ -624,6 +624,22 @@ test('ActionCaller _resolveActionConfig', async (t) => {
     t.is(result, null, 'should return null when config ID param is missing')
   })
 
+  t.test('should throw error if raw config supplied without config ID param', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee()
+    const configsDb = new MockHyperbee({})
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+
+    try {
+      await caller._resolveActionConfig('setupPools', {
+        config: { id: 'attacker-config', poolUrls: [{ url: 'stratum://evil.example.com:3333', workerName: 'w', workerPassword: 'p' }] }
+      })
+      t.fail('should throw error')
+    } catch (err) {
+      t.is(err.message, 'ERR_RAW_CONFIG_NOT_ALLOWED', 'should reject raw config used to bypass the approval ceremony')
+    }
+  })
+
   t.test('should throw error if configsDb is not available', async (t) => {
     const net = new MockNetFacility()
     const racks = new MockHyperbee()

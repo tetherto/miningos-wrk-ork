@@ -105,6 +105,13 @@ class ActionCaller {
 
     const configId = params?.[configIdParam]
     if (!configId) {
+      // Actions gated by a resolver must always resolve their config server-side
+      // via configIdParam. A caller supplying a raw `config` payload directly
+      // would otherwise reach the device unresolved and unchecked, bypassing the
+      // approval status / whitelist checks below entirely.
+      if (params && Object.prototype.hasOwnProperty.call(params, 'config')) {
+        throw new Error('ERR_RAW_CONFIG_NOT_ALLOWED')
+      }
       return null
     }
 
