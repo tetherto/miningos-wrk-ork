@@ -443,6 +443,36 @@ test('ActionCaller callTargets', async (t) => {
     t.is(targets.rack1.calls[0].error, 'Network error', 'should set error on call')
   })
 
+  t.test('should surface an in-band device failure as a call error', async (t) => {
+    const net = new MockNetFacility()
+    net.jRequest = async () => ({ success: false, error_msg: 'set_miner_conf.cgi 401' })
+    const racks = new MockHyperbee({ rack1: { id: 'rack1', info: { rpcPublicKey: 'key1' } } })
+    const caller = createActionCaller(net, racks)
+
+    const targets = { rack1: { calls: [{ id: 'thing1', tags: [] }] } }
+
+    await caller.callTargets('setupPools', [{}], targets)
+
+    t.is(targets.rack1.calls[0].error, 'set_miner_conf.cgi 401', 'should set error on call')
+    t.alike(targets.rack1.calls[0].result, { success: false, error_msg: 'set_miner_conf.cgi 401' }, 'should keep result intact')
+  })
+
+  t.test('should not set an error for successful or non-envelope results', async (t) => {
+    const racks = new MockHyperbee({ rack1: { id: 'rack1', info: { rpcPublicKey: 'key1' } } })
+
+    const okNet = new MockNetFacility()
+    okNet.jRequest = async () => ({ success: true })
+    const okTargets = { rack1: { calls: [{ id: 'thing1', tags: [] }] } }
+    await createActionCaller(okNet, racks).callTargets('setupPools', [{}], okTargets)
+    t.absent(okTargets.rack1.calls[0].error, 'success must not set an error')
+
+    const plainNet = new MockNetFacility()
+    plainNet.jRequest = async () => 1
+    const plainTargets = { rack1: { calls: [{ id: 'thing1', tags: [] }] } }
+    await createActionCaller(plainNet, racks).callTargets('someAction', [{}], plainTargets)
+    t.absent(plainTargets.rack1.calls[0].error, 'non-envelope result must not set an error')
+  })
+
   t.test('should handle empty targets', async (t) => {
     const net = new MockNetFacility()
     const racks = new MockHyperbee()
