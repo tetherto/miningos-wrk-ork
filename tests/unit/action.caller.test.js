@@ -597,7 +597,8 @@ test('ActionCaller callTargets', async (t) => {
 const testActionConfigResolvers = {
   setupPools: {
     configIdParam: 'poolConfigId',
-    configType: 'pool'
+    configType: 'pool',
+    requiredPerms: ['pool_config']
   }
 }
 
@@ -613,15 +614,32 @@ test('ActionCaller _resolveActionConfig', async (t) => {
     t.is(result, null, 'should return null for unconfigured action')
   })
 
-  t.test('should return null if configIdParam not in params', async (t) => {
+  t.test('should throw error if configIdParam not in params', async (t) => {
     const net = new MockNetFacility()
     const racks = new MockHyperbee()
     const configsDb = new MockHyperbee({})
     const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
 
-    const result = await caller._resolveActionConfig('setupPools', { otherParam: 'value' })
+    try {
+      await caller._resolveActionConfig('setupPools', { otherParam: 'value' })
+      t.fail('should throw error')
+    } catch (err) {
+      t.is(err.message, 'ERR_CONFIG_ID_REQUIRED', 'should require the config ID param')
+    }
+  })
 
-    t.is(result, null, 'should return null when config ID param is missing')
+  t.test('should throw error if raw config supplied alongside config ID param', async (t) => {
+    const net = new MockNetFacility()
+    const racks = new MockHyperbee()
+    const configsDb = new MockHyperbee({})
+    const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+
+    try {
+      await caller._resolveActionConfig('setupPools', { poolConfigId: 'config-123', config: { poolUrls: [] } })
+      t.fail('should throw error')
+    } catch (err) {
+      t.is(err.message, 'ERR_RAW_CONFIG_NOT_ALLOWED', 'should reject raw config even with a config ID')
+    }
   })
 
   t.test('should throw error if raw config supplied without config ID param', async (t) => {
@@ -793,7 +811,7 @@ test('ActionCaller _callThing with config resolution', async (t) => {
     t.is(resolvedParams[0].config.poolUrls[0].workerName, 'account.worker', 'should have original workerName (device worker transforms)')
   })
 
-  t.test('should pass params directly if no configIdParam in params', async (t) => {
+  t.test('should refuse to forward params without configIdParam', async (t) => {
     const net = new MockNetFacility()
     const racks = new MockHyperbee({
       'miner-rack1': {
@@ -808,11 +826,11 @@ test('ActionCaller _callThing with config resolution', async (t) => {
       { url: 'stratum://direct.pool.com:3333', worker_name: 'direct_worker', worker_password: 'abc' }
     ]
 
-    await caller._callThing('miner-rack1', 'miner-uuid-1', ACTION_TYPES.SETUP_POOLS, [directPools])
-
-    t.is(net.jRequestCalls.length, 1, 'should make 1 call')
-    const resolvedParams = net.jRequestCalls[0].params.params
-    t.is(resolvedParams[0], directPools, 'should pass pools directly without transformation')
+    await t.exception(
+      caller._callThing('miner-rack1', 'miner-uuid-1', ACTION_TYPES.SETUP_POOLS, [directPools]),
+      /ERR_CONFIG_ID_REQUIRED/
+    )
+    t.is(net.jRequestCalls.length, 0, 'should not reach the device')
   })
 
   t.test('should handle actions without resolver normally', async (t) => {
@@ -853,7 +871,7 @@ test('ActionCaller _callThing with config resolution', async (t) => {
     }
   })
 
-  t.test('should handle action with empty params object', async (t) => {
+  t.test('should reject action with empty params object', async (t) => {
     const net = new MockNetFacility()
     const racks = new MockHyperbee({
       'miner-rack1': {
@@ -865,11 +883,11 @@ test('ActionCaller _callThing with config resolution', async (t) => {
     const caller = createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
 
     // Empty params object - no poolConfigId
-    await caller._callThing('miner-rack1', 'miner-uuid-1', ACTION_TYPES.SETUP_POOLS, [{}])
-
-    t.is(net.jRequestCalls.length, 1, 'should make 1 call')
-    const resolvedParams = net.jRequestCalls[0].params.params
-    t.alike(resolvedParams, [{}], 'should pass empty object as-is')
+    await t.exception(
+      caller._callThing('miner-rack1', 'miner-uuid-1', ACTION_TYPES.SETUP_POOLS, [{}]),
+      /ERR_CONFIG_ID_REQUIRED/
+    )
+    t.is(net.jRequestCalls.length, 0, 'should not reach the device')
   })
 
   t.test('should work with custom resolvers for different actions', async (t) => {
@@ -911,5 +929,64 @@ test('ActionCaller _callThing with config resolution', async (t) => {
     t.is(resolvedParams[0].config.settings.length, 2, 'should have 2 temperature settings')
     t.is(resolvedParams[0].config.settings[0].zone, 'inlet', 'should have original zone (device worker transforms)')
     t.is(resolvedParams[0].config.settings[0].targetTemp, 25, 'should have original targetTemp')
+  })
+})
+
+test('ActionCaller getWriteCalls config-backed actions', async (t) => {
+  const callerFor = (configs = {}) => {
+    const net = new MockNetFacility()
+    net.jRequest = async (publicKey, method, params, opts) => {
+      net.jRequestCalls.push({ publicKey, method, params, opts })
+      return { calls: [{ id: 'miner-1', tags: [] }], reqVotes: 1 }
+    }
+    const racks = new MockHyperbee({
+      r1: { id: 'r1', type: 'miner-s19', info: { rpcPublicKey: 'a1' } }
+    })
+    const configsDb = new MockHyperbee(configs)
+    return createActionCaller(net, racks, 50, null, {}, configsDb, testActionConfigResolvers)
+  }
+  const approved = { 'pool:config-123': { id: 'config-123', status: 'approved', poolUrls: [] } }
+  const attackerConfig = { poolUrls: [{ url: 'stratum://evil.example.com:3333', workerName: 'w', workerPassword: 'p' }] }
+
+  t.test('rejects setupPools from a caller without pool_config write', async (t) => {
+    const caller = callerFor(approved)
+    await t.exception(
+      caller.getWriteCalls({}, 'setupPools', [{ poolConfigId: 'config-123' }], ['miner:rw', 'actions:rw']),
+      /ERR_PERMISSION_DENIED/
+    )
+    t.is(caller._net.jRequestCalls.length, 0, 'no rack is asked for write calls')
+  })
+
+  t.test('rejects setupPools with an inline config at submission', async (t) => {
+    await t.exception(
+      callerFor(approved).getWriteCalls({}, 'setupPools', [{ config: attackerConfig }], ['miner:rw', 'pool_config:rw']),
+      /ERR_RAW_CONFIG_NOT_ALLOWED/
+    )
+  })
+
+  t.test('rejects setupPools without a config id at submission', async (t) => {
+    await t.exception(
+      callerFor(approved).getWriteCalls({}, 'setupPools', [{}], ['miner:rw', 'pool_config:rw']),
+      /ERR_CONFIG_ID_REQUIRED/
+    )
+  })
+
+  t.test('rejects setupPools referencing an unapproved config at submission', async (t) => {
+    const pending = { 'pool:config-123': { id: 'config-123', status: 'pending', poolUrls: [] } }
+    await t.exception(
+      callerFor(pending).getWriteCalls({}, 'setupPools', [{ poolConfigId: 'config-123' }], ['miner:rw', 'pool_config:rw']),
+      /ERR_CONFIG_NOT_APPROVED/
+    )
+  })
+
+  t.test('accepts setupPools with an approved config id and both permissions', async (t) => {
+    const r = await callerFor(approved).getWriteCalls({}, 'setupPools', [{ poolConfigId: 'config-123' }], ['miner:rw', 'pool_config:rw'])
+    t.ok(r.targets.r1, 'rack target collected')
+    t.alike(r.requiredPerms.sort(), ['miner', 'pool_config'], 'voters need pool_config too')
+  })
+
+  t.test('still requires the thing write permission', async (t) => {
+    const r = await callerFor(approved).getWriteCalls({}, 'setupPools', [{ poolConfigId: 'config-123' }], ['miner:r', 'pool_config:rw'])
+    t.alike(r.targets, {}, 'no targets without miner write')
   })
 })

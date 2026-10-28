@@ -136,14 +136,16 @@ const CONFIG_TYPES = {
  * {
  *   [actionName]: {
  *     configIdParam: string,  // Param field containing the config ID
- *     configType: string      // Config type prefix in DB (e.g., 'pool' -> 'pool:configId')
+ *     configType: string,     // Config type prefix in DB (e.g., 'pool' -> 'pool:configId')
+ *     requiredPerms: string[] // Write perms the submitter needs on top of the thing type
  *   }
  * }
  */
 const DEFAULT_ACTION_CONFIG_RESOLVERS = {
   setupPools: {
     configIdParam: 'poolConfigId',
-    configType: 'pool'
+    configType: 'pool',
+    requiredPerms: ['pool_config']
   }
 }
 

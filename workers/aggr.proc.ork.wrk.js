@@ -837,8 +837,12 @@ class WrkProcAggr extends TetherWrkBase {
   }
 
   _redactAction (action) {
-    const items = Array.isArray(action.params) ? [...action.params] : []
-    for (const target of Object.values(action.targets || {})) {
+    this._redactCredentials(action.params, action.targets)
+  }
+
+  _redactCredentials (params, targets) {
+    const items = Array.isArray(params) ? [...params] : []
+    for (const target of Object.values(targets || {})) {
       target?.calls?.forEach(call => items.push(call?.result))
     }
     for (const item of items) {
@@ -849,6 +853,23 @@ class WrkProcAggr extends TetherWrkBase {
       for (const poolUrls of [item?.poolUrls, item?.data?.poolUrls]) {
         poolUrls?.forEach?.(u => { if (u) delete u.workerPassword })
       }
+    }
+  }
+
+  /**
+   * The done store is append-only and never pruned, so device credentials must not
+   * reach it. Every terminal write (executed, denied, cancelled, instant) goes through
+   * dbActDone.put; strip credentials there once the action no longer needs them.
+   */
+  _scrubDoneWrites (approver) {
+    const done = approver.dbActDone
+    const put = done.put.bind(done)
+    done.put = (key, value, opts) => {
+      const data = approver._decode(value)
+      if (Array.isArray(data?.payload)) {
+        this._redactCredentials(data.payload[0], data.payload[1])
+      }
+      return put(key, approver._encode(data), opts)
     }
   }
 
@@ -1522,6 +1543,7 @@ class WrkProcAggr extends TetherWrkBase {
         })
         this.actionCaller = actionCallerProxy
         await this.actionApprover_0.initDb(this.actionDb)
+        this._scrubDoneWrites(this.actionApprover_0)
         this.actionApprover_0.initWrk(this.actionCaller)
         await this.actionApprover_0.startInterval(this.conf.ork.actionIntvlMs || 30000)
 

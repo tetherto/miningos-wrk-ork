@@ -6,9 +6,21 @@
     }
   ],
   "nominalSiteHashrate_MHS": 709032000000,
+  "invoiceNominalHashrate_MHS": 750000000000,
   "nominalSiteMinerCapacity": 4232,
   "nominalSiteWeightedAvgEfficiency": 28.36,
   "nominalAvailablePowerMWh": 22.5,
+  "capexUsd": 18000000,
+  "phaseCapexUsd": {
+    "phase1_5": 400000
+  },
+  "phaseNominals": {
+    "phase1_5": {
+      "nominalHashrate_MHS": 50760000000,
+      "nominalPower_MW": 0.87,
+      "nominalEfficiency_WTHS": 17.2
+    }
+  },
   "siteEnergyDataThresholdMWh": 0.05,
   "consumptionLevels": {
     "low": 50000,

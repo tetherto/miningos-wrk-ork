@@ -181,7 +181,15 @@ class MockActionApprover {
   }
 
   async initDb (db) {
-    // Mock initDb
+    this.dbActDone = { put: async () => {} }
+  }
+
+  _encode (data) {
+    return Buffer.from(JSON.stringify(data), 'utf-8')
+  }
+
+  _decode (data) {
+    return JSON.parse(data.toString('utf-8'))
   }
 
   initWrk (actionCaller) {
@@ -1114,6 +1122,47 @@ test('getAction', async (t) => {
       t.is(JSON.stringify(res).match(/secret|username/g), null, 'should not expose credentials')
       t.is(res.params[0].opts.address, '10.0.0.1', 'should keep non-secret opts')
     }
+  })
+
+  t.test('should not persist credentials into the done store', async (t) => {
+    const worker = await createWorker()
+    worker._start(() => {})
+
+    const stored = new Map()
+    const approver = {
+      queue: { pushTask: fn => fn() },
+      _validVoter: () => true,
+      _encode: data => Buffer.from(JSON.stringify(data), 'utf-8'),
+      _decode: data => JSON.parse(data.toString('utf-8')),
+      dbActDone: { put: async (key, value) => { stored.set(key.toString('hex'), value) } }
+    }
+    worker._scrubDoneWrites(approver)
+    worker.actionApprover_0 = approver
+
+    let sentParams
+    worker.actionCaller = {
+      callTargets: async (action, params, targets) => {
+        sentParams = structuredClone(params)
+        targets['rack-1'].calls[0].result = { opts: { username: 'root', password: 'miner-secret' } }
+      }
+    }
+
+    const data = await worker._execActionInstant({
+      action: 'registerThing',
+      payload: [
+        [{ rackId: 'rack-1', opts: { address: '10.0.0.1', username: 'root', password: 'miner-secret' } }],
+        { 'rack-1': { calls: [{ id: 'rack-1' }] } },
+        ['miner']
+      ],
+      voter: 'test@example.com'
+    })
+
+    t.is(data.status, 'COMPLETED', 'should complete')
+    t.is(sentParams[0].opts.password, 'miner-secret', 'should still send credentials to the rack')
+    t.is(stored.size, 1, 'should write one done record')
+    const raw = [...stored.values()][0].toString()
+    t.is(raw.match(/secret|username/g), null, 'should not store credentials')
+    t.is(JSON.parse(raw).payload[0][0].opts.address, '10.0.0.1', 'should keep non-secret opts')
   })
 })
 

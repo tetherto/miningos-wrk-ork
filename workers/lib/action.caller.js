@@ -93,7 +93,7 @@ class ActionCaller {
    * Fetches the full config and passes it to the action. The device worker handles transformation.
    * @param {string} action - The action name
    * @param {Object} params - The action params (first element of params array)
-   * @returns {Promise<Array|null>} - Config data as params array or null if no resolution needed
+   * @returns {Promise<Array|null>} - Config data as params array or null if the action has no resolver
    */
   async _resolveActionConfig (action, params) {
     const resolver = this._actionConfigResolvers[action]
@@ -103,16 +103,17 @@ class ActionCaller {
 
     const { configIdParam, configType } = resolver
 
+    // Actions gated by a resolver must always resolve their config server-side
+    // via configIdParam. A caller supplying a raw `config` payload directly
+    // would otherwise reach the device unresolved and unchecked, bypassing the
+    // approval status / whitelist checks below entirely.
+    if (params && Object.prototype.hasOwnProperty.call(params, 'config')) {
+      throw new Error('ERR_RAW_CONFIG_NOT_ALLOWED')
+    }
+
     const configId = params?.[configIdParam]
     if (!configId) {
-      // Actions gated by a resolver must always resolve their config server-side
-      // via configIdParam. A caller supplying a raw `config` payload directly
-      // would otherwise reach the device unresolved and unchecked, bypassing the
-      // approval status / whitelist checks below entirely.
-      if (params && Object.prototype.hasOwnProperty.call(params, 'config')) {
-        throw new Error('ERR_RAW_CONFIG_NOT_ALLOWED')
-      }
-      return null
+      throw new Error('ERR_CONFIG_ID_REQUIRED')
     }
 
     if (!this._configsDb) {
@@ -251,10 +252,25 @@ class ActionCaller {
       }
     }
 
+    const requiredPerms = new Set()
+
+    // Config-backed actions (e.g. setupPools) exercise the config's permission class,
+    // not just the thing type, and must reference an approved config. Reject at
+    // submission so an unauthorized or unresolvable request never becomes an action.
+    const resolver = this._actionConfigResolvers[action]
+    if (resolver) {
+      for (const perm of resolver.requiredPerms || []) {
+        if (!hasWritePermission(permissions, perm)) {
+          throw new Error('ERR_PERMISSION_DENIED')
+        }
+        requiredPerms.add(perm)
+      }
+      await this._resolveActionConfig(action, params[0])
+    }
+
     const targets = {}
     const stream = this._racks.createReadStream()
     const limit = 5
-    const requiredPerms = new Set()
     // Read-only actions only stream data back off the thing, so the caller needs its
     // read level; everything else is a mutation and needs write.
     const hasActionPermission = this.readOnlyActions.has(action)
