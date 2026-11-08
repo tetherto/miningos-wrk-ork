@@ -392,6 +392,18 @@
       "by_meter_power_w": {
         "op": "obj_concat",
         "src": "by_meter_power_w"
+      },
+      "site_power_w_avg": {
+        "op": "arr_concat",
+        "src": "site_power_w_avg"
+      },
+      "site_power_w_count": {
+        "op": "sum",
+        "src": "site_power_w_count"
+      },
+      "window_samples": {
+        "op": "sum",
+        "src": "window_samples"
       }
     }
   },
