@@ -43,7 +43,7 @@
     "@bitfinex/lib-js-util-task-queue": "^1.0.1",
     "@tetherto/miningos-lib-stats": "git+https://github.com/tetherto/miningos-lib-stats.git#v1.0.0",
     "@tetherto/svc-facs-action-approver": "^1.0.2",
-    "@tetherto/tether-wrk-base": "^2.0.1",
+    "@tetherto/tether-wrk-base": "^2.1.1",
     "async": "3.2.6",
     "date-fns": "3.6.0",
     "debug": "4.4.1",
