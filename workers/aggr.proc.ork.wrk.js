@@ -86,7 +86,6 @@ class WrkProcAggr extends TetherWrkBase {
     super.init()
 
     this.setInitFacs([
-      ['fac', '@bitfinex/bfx-facs-interval', '0', '0', {}, -10],
       ['fac', '@tetherto/hp-svc-facs-store', 's1', 's1', {
         storeDir: `store/${this.ctx.cluster}-db`
       }, -5],
